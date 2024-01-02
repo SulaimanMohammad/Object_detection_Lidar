@@ -40,7 +40,7 @@ int feedbackValue;
 // Point represent connection between distance-angle in 2D plan
 struct Point
 {
-    float x, y;
+    float x, y, distance;
     double angle;
     bool visited = false;
     int clusterId = UNCLASSIFIED;
@@ -51,7 +51,7 @@ bool isFirstReading[full_FOV / FOV + 1]; // Array to track if it's the first rea
 
 // DBSCAN parameters
 float epsilon;
-const int minPoints = 4;
+const int minPoints = 2;
 const int MAX_CLUSTERS = MAX_POINTS;
 int numPoints = 0;
 Point points[MAX_POINTS];
@@ -63,6 +63,8 @@ struct KDistance
     int index;
 };
 const int K = minPoints;
+float coeff_elbow = 0.7; // 70%
+float coeff_Knee = 1 - coeff_elbow;
 
 struct ClusterCenter
 {
@@ -82,6 +84,8 @@ void DBSCAN();
 void expandCluster(int pointIndex, int clusterId, int *neighbors, int &numNeighbors);
 void getNeighbors(int pointIndex, int *neighbors, int &numNeighbors);
 void initializeClusterData();
+float findKneePoint(const std::vector<float> &kDistances);
+float findElbowPoint(float kDistances[], int numPoints);
 void calculateKDistance(Point points[], int numPoints, float kDistances[]);
 void calculateCentroids();
 int get_distance();
@@ -145,7 +149,6 @@ void loop()
     float kDistances[MAX_POINTS];
     calculateKDistance(points, numPoints, kDistances);
 
-    // Optionally, process or print the kDistances here
     for (int i = 0; i < numPoints; ++i)
     {
         if (kDistances[i] != -1)
@@ -157,26 +160,8 @@ void loop()
         }
     }
 
-    float maxDifference = 0;
-    int elbowPoint = -1;
-    for (int i = 1; i < numPoints; ++i)
-    {
-        float difference = abs(kDistances[i] - kDistances[i - 1]);
-        if (difference > maxDifference)
-        {
-            maxDifference = difference;
-            elbowPoint = i;
-        }
-    }
-
-    if (elbowPoint != -1)
-    {
-        Serial.print("Elbow Point at Index: ");
-        Serial.println(elbowPoint);
-        Serial.print("Suggested Epsilon: ");
-        Serial.println(kDistances[elbowPoint]);
-        epsilon = kDistances[elbowPoint];
-    }
+    // Calculate espilon
+    epsilon = coeff_elbow * findElbowPoint(kDistances, numPoints) + coeff_Knee * findKneePoint(kDistances);
 
     if (numPoints > 0)
     {
@@ -315,7 +300,7 @@ void initializeClusterData()
 }
 
 /*
---------------------------------- K-Distance to defin epsilon od DBSCAN -----------------------
+--------------------------------- K-Distance to define epsilon od DBSCAN -----------------------
 */
 // Function to calculate the k-distance for each point
 void calculateKDistance(Point points[], int numPoints, float kDistances[])
@@ -341,6 +326,85 @@ void calculateKDistance(Point points[], int numPoints, float kDistances[])
         {
             kDistances[i] = -1; // Indicate insufficient neighbors
         }
+    }
+}
+
+/*
+--------------------------------- Find epsilon od DBSCAN -----------------------
+*/
+float calculatePointDistance(const Point &p1, const Point &p2)
+{
+    return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2));
+}
+// Elbow Method
+float findElbowPoint(float kDistances[], int numPoints)
+{
+    float maxDifference = 0;
+    int elbowPoint = -1;
+
+    for (int i = 1; i < numPoints; ++i)
+    {
+        float difference = abs(kDistances[i] - kDistances[i - 1]);
+        if (difference > maxDifference)
+        {
+            maxDifference = difference;
+            elbowPoint = i;
+        }
+    }
+
+    if (elbowPoint != -1)
+    {
+        Serial.print("Elbow Point at Index: ");
+        Serial.println(elbowPoint);
+        Serial.print("Suggested Epsilon: ");
+        Serial.println(kDistances[elbowPoint]);
+        return kDistances[elbowPoint];
+    }
+}
+
+// Knee method ( consider many Elbows)
+float findKneePoint(const std::vector<float> &kDistances)
+{
+    int numPoints = kDistances.size();
+    if (numPoints == 0)
+        return -1;
+
+    // Explicitly create Point objects
+    Point start;
+    start.x = 0;
+    start.y = kDistances[0];
+
+    Point end;
+    end.x = static_cast<float>(numPoints - 1);
+    end.y = kDistances.back();
+
+    float maxDistance = -1;
+    int kneeIndex = -1;
+
+    for (int i = 0; i < numPoints; ++i)
+    {
+        Point current;
+        current.x = static_cast<float>(i);
+        current.y = kDistances[i];
+
+        float numerator = fabs((end.y - start.y) * current.x - (end.x - start.x) * current.y + end.x * start.y - end.y * start.x);
+        float denominator = calculatePointDistance(start, end);
+
+        float distance = numerator / denominator;
+        if (distance > maxDistance)
+        {
+            maxDistance = distance;
+            kneeIndex = i;
+        }
+    }
+
+    if (kneePoint != -1)
+    {
+        Serial.print("Knee Point at Index: ");
+        Serial.println(kneePoint);
+        Serial.print("Suggested Epsilon: ");
+        Serial.println(kDistances[kneePoint]);
+        return kDistances[kneePoint];
     }
 }
 
