@@ -25,7 +25,7 @@
 #define UNCLASSIFIED -1
 
 // Lidar variables
-const int numSamples = 2; // number of samples for one reading
+const int numSamples = 1; // number of samples for one reading
 #define FOV 2             // Field of View of the sensor
 #define full_FOV 180
 #define MAX_POINTS full_FOV / FOV // Adjust based on your maximum expected number of points
@@ -35,7 +35,6 @@ int controle = 2;
 int feedbackPin = 4;
 int readingsCount = 0;
 int servoPosition = 0; // Current position of the servo
-int feedbackValue;
 
 // Point represent connection between distance-angle in 2D plan
 struct Point
@@ -84,7 +83,7 @@ void DBSCAN();
 void expandCluster(int pointIndex, int clusterId, int *neighbors, int &numNeighbors);
 void getNeighbors(int pointIndex, int *neighbors, int &numNeighbors);
 void initializeClusterData();
-float findKneePoint(const std::vector<float> &kDistances);
+float findKneePoint(float kDistances[], int numPoints);
 float findElbowPoint(float kDistances[], int numPoints);
 void calculateKDistance(Point points[], int numPoints, float kDistances[]);
 void calculateCentroids();
@@ -127,7 +126,6 @@ void loop()
     {
         myservo.write(servoPosition);
         delay(50); // Wait for stabilization
-        feedbackValue = 0;
         int distance = get_distance();
         if (distance > 0 && numPoints < MAX_POINTS)
         { // Check if the reading is valid
@@ -161,7 +159,7 @@ void loop()
     }
 
     // Calculate espilon
-    epsilon = coeff_elbow * findElbowPoint(kDistances, numPoints) + coeff_Knee * findKneePoint(kDistances);
+    epsilon = coeff_elbow * findElbowPoint(kDistances, numPoints) + coeff_Knee * findKneePoint(kDistances, numPoints);
 
     if (numPoints > 0)
     {
@@ -204,8 +202,8 @@ void loop()
 Point polarToCartesian(int servo_angle, float distance)
 {
     Point p;
+    p.angle = servo_angle;
     double radian = static_cast<float>(servo_angle) * PI / 180.0f;
-    p.angle = radian;
     p.x = distance * cos(radian);
     p.y = distance * sin(radian);
     return p;
@@ -214,7 +212,7 @@ Point polarToCartesian(int servo_angle, float distance)
 // Function to calculate Euclidean distance between two points
 float calculateDistance(const Point &p1, const Point &p2)
 {
-    return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2));
+    return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2)); // Euclidean distance
 }
 
 /*--------------------------------- DBSCAN -----------------------*/
@@ -360,12 +358,12 @@ float findElbowPoint(float kDistances[], int numPoints)
         Serial.println(kDistances[elbowPoint]);
         return kDistances[elbowPoint];
     }
+    return 0;
 }
 
 // Knee method ( consider many Elbows)
-float findKneePoint(const std::vector<float> &kDistances)
+float findKneePoint(float kDistances[], int numPoints)
 {
-    int numPoints = kDistances.size();
     if (numPoints == 0)
         return -1;
 
@@ -376,7 +374,7 @@ float findKneePoint(const std::vector<float> &kDistances)
 
     Point end;
     end.x = static_cast<float>(numPoints - 1);
-    end.y = kDistances.back();
+    end.y = kDistances[numPoints - 1];
 
     float maxDistance = -1;
     int kneeIndex = -1;
@@ -398,14 +396,15 @@ float findKneePoint(const std::vector<float> &kDistances)
         }
     }
 
-    if (kneePoint != -1)
+    if (kneeIndex != -1)
     {
         Serial.print("Knee Point at Index: ");
-        Serial.println(kneePoint);
+        Serial.println(kneeIndex);
         Serial.print("Suggested Epsilon: ");
-        Serial.println(kDistances[kneePoint]);
-        return kDistances[kneePoint];
+        Serial.println(kDistances[kneeIndex]);
+        return kDistances[kneeIndex];
     }
+    return 0;
 }
 
 /*
