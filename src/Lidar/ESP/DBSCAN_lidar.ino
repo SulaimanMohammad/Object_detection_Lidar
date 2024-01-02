@@ -54,6 +54,7 @@ const int minPoints = 2;
 const int MAX_CLUSTERS = MAX_POINTS;
 int numPoints = 0;
 Point points[MAX_POINTS];
+float angleWeight = 0.2;
 
 // K-distance to define espsilon of DBSCAN
 struct KDistance
@@ -212,7 +213,9 @@ Point polarToCartesian(int servo_angle, float distance)
 // Function to calculate Euclidean distance between two points
 float calculateDistance(const Point &p1, const Point &p2)
 {
-    return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2)); // Euclidean distance
+    float distanceDiff = sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2)); // Euclidean distance
+    float angleDiff = fabs(p1.angle - p2.angle);                          // Absolute difference in angles
+    return distanceDiff + angleWeight * angleDiff;                        // Combine using a weight factor
 }
 
 /*--------------------------------- DBSCAN -----------------------*/
