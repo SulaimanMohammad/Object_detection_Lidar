@@ -81,6 +81,7 @@ Servo myservo;
 void move_collect_data(int start_point, int end_point);
 void detect_objects_clustering();
 void resetData();
+void print_position_distance(int arrayIndex, int servoPosition, int distance_value);
 Point polarToCartesian(int servo_angle, float distance);
 float calculateDistance(const Point &p1, const Point &p2);
 void DBSCAN();
@@ -153,17 +154,13 @@ void move_collect_data(int start_point, int end_point)
         if (distance > 0 && numPoints < MAX_POINTS)
         { // Check if the reading is valid
             int arrayIndex = abs(servoPosition) / FOV;
-            Serial.print("arrayIndex");
-            Serial.print(arrayIndex);
             savedDistances[arrayIndex] = updateAverage(savedDistances[arrayIndex], distance, isFirstReading[arrayIndex]);
             isFirstReading[arrayIndex] = false;
 
             // Convert valid polar coordinates to Cartesian and store in the array
             points[numPoints] = polarToCartesian(servoPosition, savedDistances[arrayIndex]);
-            SerialPort.print(" ,Position: ");
-            SerialPort.print(servoPosition);
-            SerialPort.print(", Updated Average: ");
-            SerialPort.println(savedDistances[arrayIndex]);
+            print_position_distance(arrayIndex, servoPosition, savedDistances[arrayIndex]);
+
             numPoints++; // Increment the number of points
         }
         // Additional check to ensure the loop includes the end point
@@ -225,6 +222,16 @@ void resetData()
         // Reset the points array
         points[i] = Point();
     }
+}
+
+void print_position_distance(int arrayIndex, int servoPosition, int distance_value)
+{
+    Serial.print("arrayIndex");
+    Serial.print(arrayIndex);
+    SerialPort.print(" ,Position: ");
+    SerialPort.print(servoPosition);
+    SerialPort.print(", Updated Average: ");
+    SerialPort.println(distance_value);
 }
 /*
 --------------------------------- Set the point in 2D plan -----------------------
@@ -516,17 +523,17 @@ void calculateCentroids()
 
             Serial.print("Cluster ");
             Serial.print(i);
-            Serial.print(" Centroid: (");
-            Serial.print(centroid.x);
-            Serial.print(", ");
-            Serial.print(centroid.y);
-            Serial.println(")");
+            // Serial.print(" Centroid: (");
+            // Serial.print(centroid.x);
+            // Serial.print(", ");
+            // Serial.print(centroid.y);
+            // Serial.println(")");
 
-            Serial.print("Core Point Index: ");
-            Serial.println(clusterData[i].corePointIndex);
-            Serial.print("Min Distance Point Index: ");
-            Serial.println(clusterData[i].minDistancePointIndex);
-            Serial.print("Min Distance: ");
+            // Serial.print("Core Point Index: ");
+            // Serial.println(clusterData[i].corePointIndex);
+            // Serial.print("Min Distance Point Index: ");
+            // Serial.println(clusterData[i].minDistancePointIndex);
+            Serial.print(" ,Min Distance: ");
             Serial.println(clusterData[i].minDistance);
         }
     }
