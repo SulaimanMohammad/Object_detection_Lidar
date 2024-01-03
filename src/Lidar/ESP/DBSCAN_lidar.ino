@@ -28,7 +28,7 @@
 const int numSamples = 1; // number of samples for one reading
 #define FOV 2             // Field of View of the sensor
 #define full_FOV 180
-#define MAX_POINTS full_FOV / FOV // Adjust based on your maximum expected number of points
+#define MAX_POINTS (full_FOV / FOV) + 1 // Adjust based on your maximum expected number of points
 
 // Servo variables
 int controle = 2;
@@ -78,6 +78,9 @@ VL53L4CX sensor_vl53l4cx_sat(&DEV_I2C, 2);
 Servo myservo;
 
 // Declear functions
+void move_collect_data(int start_point, int end_point);
+void detect_objects_clustering();
+void resetData();
 Point polarToCartesian(int servo_angle, float distance);
 float calculateDistance(const Point &p1, const Point &p2);
 void DBSCAN();
@@ -121,34 +124,62 @@ void setup()
 
 void loop()
 {
+    myservo.write(0);
+    delay(500); // Wait for stabilization
+    move_collect_data(0, 180);
+    detect_objects_clustering();
+    move_collect_data(180, 0);
+    detect_objects_clustering();
+    resetData();
+    delay(500); // Wait for stabilization
+    Serial.println("-------------------------------------------------");
+}
+
+/*
+ */
+void move_collect_data(int start_point, int end_point)
+{
+    int step = (start_point < end_point) ? FOV : -FOV; // Determine the direction based on start and end values
+
     // Reset numPoints before collecting new data
     numPoints = 0;
-    // Move from 0° to 180°, updating the average and collecting valid data
-    for (servoPosition = 0; servoPosition <= full_FOV; servoPosition += FOV)
+
+    // Move from start to end, updating the average and collecting valid data
+    for (int servoPosition = start_point; (step > 0) ? (servoPosition <= end_point) : (servoPosition >= end_point); servoPosition += step)
     {
         myservo.write(servoPosition);
         delay(50); // Wait for stabilization
         int distance = get_distance();
         if (distance > 0 && numPoints < MAX_POINTS)
         { // Check if the reading is valid
-            int arrayIndex = servoPosition / FOV;
+            int arrayIndex = abs(servoPosition) / FOV;
+            Serial.print("arrayIndex");
+            Serial.print(arrayIndex);
             savedDistances[arrayIndex] = updateAverage(savedDistances[arrayIndex], distance, isFirstReading[arrayIndex]);
             isFirstReading[arrayIndex] = false;
 
             // Convert valid polar coordinates to Cartesian and store in the array
             points[numPoints] = polarToCartesian(servoPosition, savedDistances[arrayIndex]);
-            SerialPort.print("Position: ");
+            SerialPort.print(" ,Position: ");
             SerialPort.print(servoPosition);
             SerialPort.print(", Updated Average: ");
             SerialPort.println(savedDistances[arrayIndex]);
             numPoints++; // Increment the number of points
         }
+        // Additional check to ensure the loop includes the end point
+        if (servoPosition == end_point)
+        {
+            break;
+        }
     }
+}
 
+void detect_objects_clustering()
+{
     // Calculate k-distance for each point
     float kDistances[MAX_POINTS];
     calculateKDistance(points, numPoints, kDistances);
-    print_kDistance(kDistances, numPoints);
+    // print_kDistance(kDistances, numPoints);
     // Calculate espilon
     epsilon = coeff_elbow * findElbowPoint(kDistances, numPoints) + coeff_Knee * findKneePoint(kDistances, numPoints);
 
@@ -181,12 +212,20 @@ void loop()
     {
         Serial.println("No valid data points collected.");
     }
-
-    myservo.write(0);
-    delay(2000); // Wait for stabilization
-    Serial.println("-------------------------------------------------");
 }
 
+void resetData()
+{
+    for (int i = 0; i < MAX_POINTS; i++)
+    {
+        // Reset savedDistances and isFirstReading for each element
+        savedDistances[i] = 0;
+        isFirstReading[i] = true;
+
+        // Reset the points array
+        points[i] = Point();
+    }
+}
 /*
 --------------------------------- Set the point in 2D plan -----------------------
 */
