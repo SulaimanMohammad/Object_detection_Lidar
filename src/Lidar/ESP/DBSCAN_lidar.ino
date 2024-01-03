@@ -25,7 +25,7 @@
 #define UNCLASSIFIED -1
 
 // Lidar variables
-const int numSamples = 1; // number of samples for one reading
+const int numSamples = 3; // number of samples for one reading
 #define FOV 2             // Field of View of the sensor
 #define full_FOV 180
 #define MAX_POINTS (full_FOV / FOV) + 1 // Adjust based on your maximum expected number of points
@@ -50,7 +50,7 @@ bool isFirstReading[full_FOV / FOV + 1]; // Array to track if it's the first rea
 
 // DBSCAN parameters
 float epsilon;
-const int minPoints = 2;
+const int minPoints = 3;
 const int MAX_CLUSTERS = MAX_POINTS;
 int numPoints = 0;
 Point points[MAX_POINTS];
@@ -63,7 +63,7 @@ struct KDistance
     int index;
 };
 const int K = minPoints;
-float coeff_elbow = 0.7; // 70%
+float coeff_elbow = 0.8; // 70%
 float coeff_Knee = 1 - coeff_elbow;
 
 struct ClusterCenter
@@ -82,6 +82,7 @@ void move_collect_data(int start_point, int end_point);
 void detect_objects_clustering();
 void resetData();
 void print_position_distance(int arrayIndex, int servoPosition, int distance_value);
+void reorderPointsForConsistentProcessing();
 Point polarToCartesian(int servo_angle, float distance);
 float calculateDistance(const Point &p1, const Point &p2);
 void DBSCAN();
@@ -126,10 +127,11 @@ void setup()
 void loop()
 {
     myservo.write(0);
-    delay(500); // Wait for stabilization
+    delay(1000); // Wait for stabilization
     move_collect_data(0, 180);
     detect_objects_clustering();
     move_collect_data(180, 0);
+    reorderPointsForConsistentProcessing(); // Reorder points for consistent processing
     detect_objects_clustering();
     resetData();
     delay(500); // Wait for stabilization
@@ -221,6 +223,8 @@ void resetData()
 
         // Reset the points array
         points[i] = Point();
+        points[i].clusterId = UNCLASSIFIED;
+        points[i].visited = false;
     }
 }
 
@@ -232,6 +236,20 @@ void print_position_distance(int arrayIndex, int servoPosition, int distance_val
     SerialPort.print(servoPosition);
     SerialPort.print(", Updated Average: ");
     SerialPort.println(distance_value);
+}
+void reorderPointsForConsistentProcessing()
+{
+    int i = 0;
+    int j = numPoints - 1;
+    while (i < j)
+    {
+        // Swap points[i] and points[j]
+        Point temp = points[i];
+        points[i] = points[j];
+        points[j] = temp;
+        i++;
+        j--;
+    }
 }
 /*
 --------------------------------- Set the point in 2D plan -----------------------
