@@ -87,6 +87,7 @@ void initializeClusterData();
 float findKneePoint(float kDistances[], int numPoints);
 float findElbowPoint(float kDistances[], int numPoints);
 void calculateKDistance(Point points[], int numPoints, float kDistances[]);
+void print_kDistance(float kDistances[], int numPoints);
 void calculateCentroids();
 int get_distance();
 int sensor_measurement();
@@ -147,18 +148,7 @@ void loop()
     // Calculate k-distance for each point
     float kDistances[MAX_POINTS];
     calculateKDistance(points, numPoints, kDistances);
-
-    for (int i = 0; i < numPoints; ++i)
-    {
-        if (kDistances[i] != -1)
-        {
-            Serial.print("Point ");
-            Serial.print(i);
-            Serial.print(" k-distance: ");
-            Serial.println(kDistances[i]);
-        }
-    }
-
+    print_kDistance(kDistances, numPoints);
     // Calculate espilon
     epsilon = coeff_elbow * findElbowPoint(kDistances, numPoints) + coeff_Knee * findKneePoint(kDistances, numPoints);
 
@@ -330,6 +320,19 @@ void calculateKDistance(Point points[], int numPoints, float kDistances[])
     }
 }
 
+void print_kDistance(float kDistances[], int numPoints)
+{
+    for (int i = 0; i < numPoints; ++i)
+    {
+        if (kDistances[i] != -1)
+        {
+            Serial.print("Point ");
+            Serial.print(i);
+            Serial.print(" k-distance: ");
+            Serial.println(kDistances[i]);
+        }
+    }
+}
 /*
 --------------------------------- Find epsilon od DBSCAN -----------------------
 */
@@ -337,79 +340,74 @@ float calculatePointDistance(const Point &p1, const Point &p2)
 {
     return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2));
 }
+
 // Elbow Method
 float findElbowPoint(float kDistances[], int numPoints)
 {
-    float maxDifference = 0;
-    int elbowPoint = -1;
+    std::vector<int> elbowIndices; // Store indices of all elbow points
 
-    for (int i = 1; i < numPoints; ++i)
+    for (int i = 1; i < numPoints - 1; ++i)
     {
-        float difference = abs(kDistances[i] - kDistances[i - 1]);
-        if (difference > maxDifference)
+        // Finding local maxima in the k-distance graph
+        if (kDistances[i] > kDistances[i - 1] && kDistances[i] > kDistances[i + 1])
         {
-            maxDifference = difference;
-            elbowPoint = i;
+            elbowIndices.push_back(i);
         }
     }
 
-    if (elbowPoint != -1)
+    // Calculate the average of all elbow points
+    float sumElbowDistances = 0;
+    for (int index : elbowIndices)
     {
-        Serial.print("Elbow Point at Index: ");
-        Serial.println(elbowPoint);
-        Serial.print("Suggested Epsilon: ");
-        Serial.println(kDistances[elbowPoint]);
-        return kDistances[elbowPoint];
+        sumElbowDistances += kDistances[index];
     }
-    return 0;
+
+    float averageElbowDistance = 0;
+    if (!elbowIndices.empty())
+    {
+        averageElbowDistance = sumElbowDistances / elbowIndices.size();
+    }
+
+    Serial.print("Average Elbow Distance: ");
+    Serial.println(averageElbowDistance);
+
+    return averageElbowDistance;
 }
 
 // Knee method ( consider many Elbows)
 float findKneePoint(float kDistances[], int numPoints)
 {
-    if (numPoints == 0)
-        return -1;
+    std::vector<int> kneeIndices; // Store indices of all knee points
 
-    // Explicitly create Point objects
-    Point start;
-    start.x = 0;
-    start.y = kDistances[0];
-
-    Point end;
-    end.x = static_cast<float>(numPoints - 1);
-    end.y = kDistances[numPoints - 1];
-
-    float maxDistance = -1;
-    int kneeIndex = -1;
-
-    for (int i = 0; i < numPoints; ++i)
+    for (int i = 1; i < numPoints - 1; ++i)
     {
-        Point current;
-        current.x = static_cast<float>(i);
-        current.y = kDistances[i];
-
-        float numerator = fabs((end.y - start.y) * current.x - (end.x - start.x) * current.y + end.x * start.y - end.y * start.x);
-        float denominator = calculatePointDistance(start, end);
-
-        float distance = numerator / denominator;
-        if (distance > maxDistance)
-        {
-            maxDistance = distance;
-            kneeIndex = i;
+        // Finding points with significant change in slope
+        float diff1 = kDistances[i] - kDistances[i - 1];
+        float diff2 = kDistances[i + 1] - kDistances[i];
+        if (diff1 * diff2 < 0)
+        { // Change in the sign of the slope
+            kneeIndices.push_back(i);
         }
     }
 
-    if (kneeIndex != -1)
+    // Calculate the average of all knee points
+    float sumKneeDistances = 0;
+    for (int index : kneeIndices)
     {
-        Serial.print("Knee Point at Index: ");
-        Serial.println(kneeIndex);
-        Serial.print("Suggested Epsilon: ");
-        Serial.println(kDistances[kneeIndex]);
-        return kDistances[kneeIndex];
+        sumKneeDistances += kDistances[index];
     }
-    return 0;
-}
 
+    float averageKneeDistance = 0;
+    if (!kneeIndices.empty())
+    {
+        averageKneeDistance = sumKneeDistances / kneeIndices.size();
+    }
+
+    Serial.print("Average Knee Distance: ");
+    Serial.println(averageKneeDistance);
+
+    return averageKneeDistance;
+}
 /*
 --------------------------------- Info of clusters -----------------------
 */
