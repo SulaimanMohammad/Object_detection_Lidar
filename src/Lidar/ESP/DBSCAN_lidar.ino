@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cfloat>
 #include <map>
+#include <numeric>
 
 #define DEV_I2C Wire
 #define SerialPort Serial
@@ -35,8 +36,8 @@ int readingsCount = 0;
 int servoPosition = 0; // Current position of the servo
 
 /* ---------- DBSCAN parameters ---------- */
-const int minPoints = 3;             // Number of close point to form cluster
-float angleWeight = 0.2;             // How imortant is the connectivity of the angle with distance
+const int minPoints = 4;             // Number of close point to form cluster
+float angleWeight = 0.4;             // How imortant is the connectivity of the angle with distance
 float shift_margin_to_merge = 100;   // Max diffeence in distance between tow clusters core to merge them
 float epsilon;                       // Dynamically defined by K-distance methode
 const int MAX_CLUSTERS = MAX_POINTS; // Maximum point of cluster
@@ -54,7 +55,13 @@ struct ClusterInfo
     float minDistance;          // Minimum distance in the cluster
     int minDistancePointIndex;  // Index of the point with minimum distance
     int sweep;                  // 1 for first sweep (0-180), 2 for second sweep (180-0)
+    float topsisScore;
+    int sweep1Index; // Index of the cluster in clustersSweep1
+    int sweep2Index; // Index of the cluster in clustersSweep2
 };
+float globalMaxCorePointDistance = 0;
+float globalMaxNumberOfPoints = 0;
+float globalMaxMinDistance = FLT_MAX;
 
 /* ----------  K-distance to define espsilon of DBSCAN parameters ---------- */
 const int K = minPoints;
@@ -94,6 +101,10 @@ float calculateDistance(const Point &p1, const Point &p2);                      
 void DBSCAN();
 void expandCluster(int pointIndex, int clusterId, int *neighbors, int &numNeighbors);
 void getNeighbors(int pointIndex, int *neighbors, int &numNeighbors);
+void normalizeClustersData(std::vector<ClusterInfo> &clusters);
+void calculateTopsisScores(std::vector<ClusterInfo> &clusters);
+ClusterInfo mergeTwoClusters(const ClusterInfo &c1, const ClusterInfo &c2);
+std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &clustersSweep1, std::vector<ClusterInfo> &clustersSweep2);
 std::vector<ClusterInfo> mergeClusters(const std::vector<ClusterInfo> &sweep1, const std::vector<ClusterInfo> &sweep2);
 float findKneePoint(float kDistances[], int numPoints);
 float findElbowPoint(float kDistances[], int numPoints);
@@ -147,7 +158,7 @@ void loop()
     detect_objects_clustering(clustersSweep2);
     printClustersInfo(clustersSweep2, 2);
 
-    std::vector<ClusterInfo> mergedClusters = mergeClusters(clustersSweep1, clustersSweep2);
+    std::vector<ClusterInfo> mergedClusters = mergeClustersBasedOnTopsis(clustersSweep1, clustersSweep2);
     Serial.println("            Merged Cluster Info: ");
     for (const auto &cluster : mergedClusters)
     {
@@ -385,48 +396,156 @@ void getNeighbors(int pointIndex, int *neighbors, int &numNeighbors)
     }
 }
 
-// Merge cluters from sweep1(0-180) and from sweep2 (180-0)
-std::vector<ClusterInfo> mergeClusters(const std::vector<ClusterInfo> &sweep1, const std::vector<ClusterInfo> &sweep2)
+/*
+-------------------------------------------------------------
+--------------------- Merge clusters ------------------------
+-------------------------------------------------------------
+*/
+// Function to normalize the cluster data
+void normalizeClustersData(std::vector<ClusterInfo> &clusters)
 {
-    std::vector<ClusterInfo> mergedClusters;
-    std::vector<bool> mergedSweep2(sweep2.size(), false);
-
-    // Compare and merge clusters from sweep1 with sweep2
-    for (const auto &cluster1 : sweep1)
+    // Find the maximum values
+    for (const auto &cluster : clusters)
     {
-        bool isMerged = false;
+        globalMaxCorePointDistance = std::max(globalMaxCorePointDistance, cluster.corePointDistance);
+        globalMaxNumberOfPoints = std::max(globalMaxNumberOfPoints, float(cluster.count));
+        globalMaxMinDistance = std::min(globalMaxMinDistance, cluster.minDistance);
+    }
 
-        for (size_t i = 0; i < sweep2.size(); ++i)
+    // Normalize the data
+    for (auto &cluster : clusters)
+    {
+        cluster.corePointDistance /= globalMaxCorePointDistance;
+        cluster.count = float(cluster.count) / globalMaxNumberOfPoints;
+        cluster.minDistance /= globalMaxMinDistance;
+    }
+}
+
+// Function to calculate TOPSIS score for each cluster
+void calculateTopsisScores(std::vector<ClusterInfo> &clusters)
+{
+    float weightCorePointDistance = 0.5;
+    float weightNumberOfPoints = 0.1;
+    float weightMinDistance = 0.4;
+
+    // Normalize the cluster data
+    normalizeClustersData(clusters);
+
+    // Calculate the ideal and negative-ideal solutions
+    float idealCorePointDistance = 1, idealNumberOfPoints = 1, idealMinDistance = 1;
+    float negIdealCorePointDistance = 0, negIdealNumberOfPoints = 0, negIdealMinDistance = 0;
+
+    // Calculate the separation measures and the relative closeness
+    for (auto &cluster : clusters)
+    {
+        float distanceToIdeal = sqrt(pow(weightCorePointDistance * (idealCorePointDistance - cluster.corePointDistance), 2) +
+                                     pow(weightNumberOfPoints * (idealNumberOfPoints - cluster.count), 2) +
+                                     pow(weightMinDistance * (idealMinDistance - cluster.minDistance), 2));
+
+        float distanceToNegIdeal = sqrt(pow(weightCorePointDistance * (cluster.corePointDistance - negIdealCorePointDistance), 2) +
+                                        pow(weightNumberOfPoints * (cluster.count - negIdealNumberOfPoints), 2) +
+                                        pow(weightMinDistance * (cluster.minDistance - negIdealMinDistance), 2));
+
+        cluster.topsisScore = distanceToNegIdeal / (distanceToNegIdeal + distanceToIdeal);
+    }
+
+    // Sort the clusters based on their TOPSIS scores
+    std::sort(clusters.begin(), clusters.end(), [](const ClusterInfo &a, const ClusterInfo &b)
+              { return a.topsisScore > b.topsisScore; });
+}
+
+ClusterInfo mergeTwoClusters(const ClusterInfo &c1, const ClusterInfo &c2)
+{
+    ClusterInfo mergedCluster;
+    mergedCluster.sumX = (c1.sumX + c2.sumX) / 2;
+    mergedCluster.sumY = (c1.sumY + c2.sumY) / 2;
+    mergedCluster.count = (c1.count + c2.count) / 2;
+    // mergedCluster.corePointDistance = (c1.corePointDistance + c2.corePointDistance) / 2;
+    mergedCluster.corePointDistance = std::min(c1.corePointDistance, c2.corePointDistance);
+    mergedCluster.minDistance = std::min(c1.minDistance, c2.minDistance);
+    return mergedCluster;
+}
+
+std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &clustersSweep1, std::vector<ClusterInfo> &clustersSweep2)
+{
+    // Calculate scores for all clusters
+    calculateTopsisScores(clustersSweep1);
+    calculateTopsisScores(clustersSweep2);
+
+    std::vector<ClusterInfo> mergedClusters;
+    std::vector<bool> mergedSweep2(clustersSweep2.size(), false);
+
+    // Define a threshold for merging clusters based on TOPSIS score similarity
+    const float scoreMergeThreshold = 0.1;
+
+    for (size_t cluster1Index = 0; cluster1Index < clustersSweep1.size(); ++cluster1Index)
+    {
+        const auto &cluster1 = clustersSweep1[cluster1Index];
+
+        float closestScoreDiff = FLT_MAX;
+        int closestClusterIndex = -1;
+
+        // Find the closest cluster from sweep 2 based on TOPSIS score
+        for (size_t i = 0; i < clustersSweep2.size(); ++i)
         {
-            // If clusters are close enough, merge them
-            if (!mergedSweep2[i] && std::abs(cluster1.corePointDistance - sweep2[i].corePointDistance) <= shift_margin_to_merge)
+            float scoreDiff = std::abs(cluster1.topsisScore - clustersSweep2[i].topsisScore);
+            /*
+            // Debugging: Print the TOPSIS score comparison
+            Serial.print("Comparing Sweep 1 Cluster ");
+            Serial.print(cluster1Index);
+            Serial.print(" (Score: ");
+            Serial.print(cluster1.topsisScore);
+            Serial.print(") with Sweep 2 Cluster ");
+            Serial.print(i);
+            Serial.print(" (Score: ");
+            Serial.print(clustersSweep2[i].topsisScore);
+            Serial.print("), Score Difference: ");
+            Serial.println(scoreDiff);
+            */
+            if (scoreDiff < closestScoreDiff && !mergedSweep2[i])
             {
-                // Merge logic: choose smaller minDistance as representative
-                ClusterInfo mergedCluster;
-                mergedCluster.minDistance = std::min(cluster1.minDistance, sweep2[i].minDistance);
-                mergedCluster.corePointDistance = (cluster1.corePointDistance + sweep2[i].corePointDistance) / 2.0;
-
-                mergedClusters.push_back(mergedCluster);
-                mergedSweep2[i] = true; // Mark as merged
-                isMerged = true;
-                break; // Assuming one-to-one merge
+                closestScoreDiff = scoreDiff;
+                closestClusterIndex = i;
             }
         }
 
-        // If not merged with any cluster from sweep2, add it as is
-        if (!isMerged)
+        // Merge the closest clusters if within the threshold
+        if (closestClusterIndex != -1 && closestScoreDiff < scoreMergeThreshold)
         {
-            mergedClusters.push_back(cluster1);
+            ClusterInfo mergedCluster = mergeTwoClusters(cluster1, clustersSweep2[closestClusterIndex]);
+            mergedCluster.sweep1Index = cluster1Index;
+            mergedCluster.sweep2Index = closestClusterIndex;
+            mergedClusters.push_back(mergedCluster);
+            mergedSweep2[closestClusterIndex] = true;
+            /*
+            // Debugging: Print info about the merged clusters
+            Serial.print("Merged Sweep 1 Cluster ");
+            Serial.print(cluster1Index);
+            Serial.print(" with Sweep 2 Cluster ");
+            Serial.println(closestClusterIndex);
+            */
+        }
+        else
+        {
+            ClusterInfo unmergedCluster = cluster1;
+            unmergedCluster.sweep1Index = cluster1Index;
+            unmergedCluster.sweep2Index = -1;
+            mergedClusters.push_back(unmergedCluster);
+
+            /*
+            // Debugging: Print info about the unmerged cluster
+            Serial.print("No suitable merge for Sweep 1 Cluster ");
+            Serial.println(cluster1Index);
+            */
         }
     }
 
-    // Add remaining unmerged clusters from sweep2
-    for (size_t i = 0; i < sweep2.size(); ++i)
+    // Reverse normalization for each merged cluster
+    for (auto &cluster : mergedClusters)
     {
-        if (!mergedSweep2[i])
-        {
-            mergedClusters.push_back(sweep2[i]);
-        }
+        cluster.corePointDistance *= globalMaxCorePointDistance;
+        cluster.count *= globalMaxNumberOfPoints;
+        cluster.minDistance *= globalMaxMinDistance;
     }
 
     return mergedClusters;
@@ -560,7 +679,7 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
     // Initialize cluster data
     for (int i = 0; i < MAX_CLUSTERS; ++i)
     {
-        clusterData[i] = {0, 0, 0, 0, 0, -1, 0, 0, FLT_MAX, -1}; // Initialize minDistance with FLT_MAX
+        clusterData[i] = {0, 0, 0, 0, 0, -1, 0, 0, FLT_MAX, -1, 0}; // Initialize minDistance with FLT_MAX
     }
 
     // Iterating through each point
