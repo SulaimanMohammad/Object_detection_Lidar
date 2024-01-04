@@ -11,8 +11,8 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
-#include <cfloat> // or <float.h> in C
-#include <map>    // Include this at the top of your file
+#include <cfloat>
+#include <map>
 
 #define DEV_I2C Wire
 #define SerialPort Serial
@@ -21,23 +21,52 @@
 #define LED_BUILTIN 13
 #endif
 #define LedPin LED_BUILTIN
-// parametrs for DBSCAN
-#define NOISE -2
-#define UNCLASSIFIED -1
 
-// Lidar variables
+/* ---------- Lidar variables ---------- */
 const int numSamples = 3; // number of samples for one reading
 #define FOV 2             // Field of View of the sensor
 #define full_FOV 180
-#define MAX_POINTS (full_FOV / FOV) + 1 // Adjust based on your maximum expected number of points
+#define MAX_POINTS (full_FOV / FOV) + 1 // Adjust based on maximum expected number of points
 
-// Servo variables
-int controle = 2;
-int feedbackPin = 4;
+/* ---------- Servo variables ---------- */
+int controle = 2;    // Pin on the bord for control signal
+int feedbackPin = 4; // Pin on the bord for the feedback if it is used
 int readingsCount = 0;
 int servoPosition = 0; // Current position of the servo
 
-// Point represent connection between distance-angle in 2D plan
+/* ---------- DBSCAN parameters ---------- */
+const int minPoints = 3;             // Number of close point to form cluster
+float angleWeight = 0.2;             // How imortant is the connectivity of the angle with distance
+float shift_margin_to_merge = 100;   // Max diffeence in distance between tow clusters core to merge them
+float epsilon;                       // Dynamically defined by K-distance methode
+const int MAX_CLUSTERS = MAX_POINTS; // Maximum point of cluster
+int numPoints = 0;
+#define NOISE -2
+#define UNCLASSIFIED -1
+struct ClusterInfo
+{
+    float sumX, sumY;           // Coordinates for centroid
+    float centroidX, centroidY; // Centroid coordinates
+    int count;                  // Count of points in the cluster
+    int corePointIndex;         // Index of the core point
+    float corePointDistance;    // Distance of the core point
+    int corePointNumNeighbors;  // Number of neighbors for the core point
+    float minDistance;          // Minimum distance in the cluster
+    int minDistancePointIndex;  // Index of the point with minimum distance
+    int sweep;                  // 1 for first sweep (0-180), 2 for second sweep (180-0)
+};
+
+/* ----------  K-distance to define espsilon of DBSCAN parameters ---------- */
+const int K = minPoints;
+float coeff_elbow = 0.8; // 70%
+float coeff_Knee = 1 - coeff_elbow;
+struct KDistance
+{
+    float distance;
+    int index;
+};
+
+/*--- Point represent connection between distance-angle in 2D plan --*/
 struct Point
 {
     float x, y, distance;
@@ -45,61 +74,26 @@ struct Point
     bool visited = false;
     int clusterId = UNCLASSIFIED;
 };
+Point points[MAX_POINTS];
 int savedDistances[(full_FOV / FOV) + 1]; // Array to store distances at each FOV step
 // +1 because 18/18=10 (0 to 162) and we need one element for the read of 180
 bool isFirstReading[full_FOV / FOV + 1]; // Array to track if it's the first reading for each position
 
-// DBSCAN parameters
-float epsilon;
-const int minPoints = 3;
-const int MAX_CLUSTERS = MAX_POINTS;
-int numPoints = 0;
-Point points[MAX_POINTS];
-float angleWeight = 0.2;
-
-// K-distance to define espsilon of DBSCAN
-struct KDistance
-{
-    float distance;
-    int index;
-};
-const int K = minPoints;
-float coeff_elbow = 0.8; // 70%
-float coeff_Knee = 1 - coeff_elbow;
-
-struct ClusterCenter
-{
-    float x, y;
-};
-ClusterCenter clusterSums[MAX_CLUSTERS];
-int clusterCounts[MAX_CLUSTERS];
-struct ClusterInfo
-{
-    float sumX, sumY;           // Coordinates for centroid
-    float centroidX, centroidY; // Centroid coordinates
-    int count;                  // Count of points in the cluster
-    int corePointIndex;         // Index of the core point
-    int corePointNumNeighbors;  // Number of neighbors for the core point
-    float minDistance;          // Minimum distance in the cluster
-    int minDistancePointIndex;  // Index of the point with minimum distance
-    int sweep;                  // 1 for first sweep (0-180), 2 for second sweep (180-0)
-};
-// Initialization .
+/* ----------  Initialization ---------- */
 VL53L4CX sensor_vl53l4cx_sat(&DEV_I2C, 2);
 Servo myservo;
 
-// Declear functions
-void move_collect_data(int start_point, int end_point);
-void detect_objects_clustering(std::vector<ClusterInfo> &clusters);
-void resetData();
-void print_position_distance(int arrayIndex, int servoPosition, int distance_value);
-void reorderPointsForConsistentProcessing();
-Point polarToCartesian(int servo_angle, float distance);
-float calculateDistance(const Point &p1, const Point &p2);
+/*----------- Functions Declaration -------*/
+void move_collect_data(int start_point, int end_point);                              // Move servo and save distance for each angle
+void detect_objects_clustering(std::vector<ClusterInfo> &clusters);                  // Call DBSCAN, calcul esp and count number of objects
+void resetData();                                                                    // Reset data after sweeps 0-180 to 180-0
+void print_position_distance(int arrayIndex, int servoPosition, int distance_value); // print data of each angle and distance
+void reorderPointsForConsistentProcessing();                                         // Reorder Point to match 0-180 with 180 to 0
+Point polarToCartesian(int servo_angle, float distance);                             // Convert point from ( angle, distance) to (x,y)
+float calculateDistance(const Point &p1, const Point &p2);                           // Calculate the distance between 2 points considering the distance and the angle
 void DBSCAN();
 void expandCluster(int pointIndex, int clusterId, int *neighbors, int &numNeighbors);
 void getNeighbors(int pointIndex, int *neighbors, int &numNeighbors);
-void initializeClusterData();
 std::vector<ClusterInfo> mergeClusters(const std::vector<ClusterInfo> &sweep1, const std::vector<ClusterInfo> &sweep2);
 float findKneePoint(float kDistances[], int numPoints);
 float findElbowPoint(float kDistances[], int numPoints);
@@ -139,9 +133,6 @@ void setup()
 
 void loop()
 {
-    myservo.write(0);
-    delay(1000); // Wait for stabilization
-
     Serial.println(" Sweep 0-180");
     move_collect_data(0, 180);
     std::vector<ClusterInfo> clustersSweep1;
@@ -150,23 +141,31 @@ void loop()
 
     Serial.println(" Sweep 180-0");
     move_collect_data(180, 0);
-    reorderPointsForConsistentProcessing();  // Reorder points for consistent processing
-    std::vector<ClusterInfo> clustersSweep2; // After second sweep
+    reorderPointsForConsistentProcessing(); // Reorder points for consistent processing
+
+    std::vector<ClusterInfo> clustersSweep2;
     detect_objects_clustering(clustersSweep2);
-    printClustersInfo(clustersSweep2, 2); // After second sweep
+    printClustersInfo(clustersSweep2, 2);
 
     std::vector<ClusterInfo> mergedClusters = mergeClusters(clustersSweep1, clustersSweep2);
+    Serial.println("            Merged Cluster Info: ");
     for (const auto &cluster : mergedClusters)
     {
-        Serial.print("Merged Cluster Min Distance: ");
+        Serial.print("CorePointDistance: ");
+        Serial.print(cluster.corePointDistance);
+        Serial.print(" \tMin Distance: ");
         Serial.println(cluster.minDistance);
     }
     resetData();
     delay(500); // Wait for stabilization
     Serial.println("-------------------------------------------------");
+    // All vectors sweep1,sweep2 and merged cluster are local of each iteration, at end of each iter they will be destroyed and mem free
 }
 
 /*
+------------------------------------------------------------
+--------------------- Main functions -----------------------
+------------------------------------------------------------
  */
 void move_collect_data(int start_point, int end_point)
 {
@@ -208,12 +207,19 @@ void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
     calculateKDistance(points, numPoints, kDistances);
     // print_kDistance(kDistances, numPoints);
     // Calculate espilon
-    epsilon = coeff_elbow * findElbowPoint(kDistances, numPoints) + coeff_Knee * findKneePoint(kDistances, numPoints);
+    int Elbow_value = findElbowPoint(kDistances, numPoints);
+    int Knee_value = findKneePoint(kDistances, numPoints);
+    epsilon = coeff_elbow * Elbow_value + coeff_Knee * Knee_value;
+    Serial.print("Elbow_value= ");
+    Serial.print(Elbow_value);
+    Serial.print(" ,Knee_value= ");
+    Serial.print(Knee_value);
+    Serial.print(",Chosed Epsilon= ");
+    Serial.println(epsilon);
 
     if (numPoints > 0)
     {
         // Apply DBSCAN for clustering only on valid points
-        initializeClusterData();
         DBSCAN();
         // Count clusters (objects) in valid points
         int uniqueClusters[MAX_POINTS] = {0};
@@ -231,7 +237,7 @@ void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
             }
         }
 
-        Serial.print("Number of objects detected: ");
+        Serial.print("Number of objects detected:");
         Serial.println(numUniqueClusters);
     }
     else
@@ -265,6 +271,7 @@ void print_position_distance(int arrayIndex, int servoPosition, int distance_val
     SerialPort.print(", Updated Average: ");
     SerialPort.println(distance_value);
 }
+
 void reorderPointsForConsistentProcessing()
 {
     int i = 0;
@@ -280,7 +287,9 @@ void reorderPointsForConsistentProcessing()
     }
 }
 /*
---------------------------------- Set the point in 2D plan -----------------------
+------------------------------------------------------------
+------------------Set the point in 2D plan -----------------
+------------------------------------------------------------
 */
 Point polarToCartesian(int servo_angle, float distance)
 {
@@ -300,7 +309,11 @@ float calculateDistance(const Point &p1, const Point &p2)
     return distanceDiff + angleWeight * angleDiff;                        // Combine using a weight factor
 }
 
-/*--------------------------------- DBSCAN -----------------------*/
+/*
+-------------------------------------------------------------
+--------------------------- DBSCAN --------------------------
+-------------------------------------------------------------
+*/
 void DBSCAN()
 {
     int clusterId = 0;
@@ -372,44 +385,42 @@ void getNeighbors(int pointIndex, int *neighbors, int &numNeighbors)
     }
 }
 
-// Function to initialize cluster arrays
-void initializeClusterData()
-{
-    for (int i = 0; i < MAX_CLUSTERS; ++i)
-    {
-        clusterSums[i] = {0, 0};
-        clusterCounts[i] = 0;
-    }
-}
-
+// Merge cluters from sweep1(0-180) and from sweep2 (180-0)
 std::vector<ClusterInfo> mergeClusters(const std::vector<ClusterInfo> &sweep1, const std::vector<ClusterInfo> &sweep2)
 {
     std::vector<ClusterInfo> mergedClusters;
     std::vector<bool> mergedSweep2(sweep2.size(), false);
 
-    // Compare and merge clusters
+    // Compare and merge clusters from sweep1 with sweep2
     for (const auto &cluster1 : sweep1)
     {
         bool isMerged = false;
+
         for (size_t i = 0; i < sweep2.size(); ++i)
         {
-            if (!mergedSweep2[i] && std::abs(cluster1.minDistance - sweep2[i].minDistance) <= 100)
+            // If clusters are close enough, merge them
+            if (!mergedSweep2[i] && std::abs(cluster1.corePointDistance - sweep2[i].corePointDistance) <= shift_margin_to_merge)
             {
                 // Merge logic: choose smaller minDistance as representative
-                ClusterInfo mergedCluster = {std::min(cluster1.minDistance, sweep2[i].minDistance), 0};
+                ClusterInfo mergedCluster;
+                mergedCluster.minDistance = std::min(cluster1.minDistance, sweep2[i].minDistance);
+                mergedCluster.corePointDistance = (cluster1.corePointDistance + sweep2[i].corePointDistance) / 2.0;
+
                 mergedClusters.push_back(mergedCluster);
-                mergedSweep2[i] = true;
+                mergedSweep2[i] = true; // Mark as merged
                 isMerged = true;
                 break; // Assuming one-to-one merge
             }
         }
+
+        // If not merged with any cluster from sweep2, add it as is
         if (!isMerged)
         {
             mergedClusters.push_back(cluster1);
         }
     }
 
-    // Add remaining unmerged clusters from the second sweep
+    // Add remaining unmerged clusters from sweep2
     for (size_t i = 0; i < sweep2.size(); ++i)
     {
         if (!mergedSweep2[i])
@@ -422,7 +433,9 @@ std::vector<ClusterInfo> mergeClusters(const std::vector<ClusterInfo> &sweep1, c
 }
 
 /*
---------------------------------- K-Distance to define epsilon od DBSCAN -----------------------
+---------------------------------------------------------------
+------------- K-Distance to define epsilon od DBSCAN ----------
+---------------------------------------------------------------
 */
 // Function to calculate the k-distance for each point
 void calculateKDistance(Point points[], int numPoints, float kDistances[])
@@ -465,7 +478,9 @@ void print_kDistance(float kDistances[], int numPoints)
     }
 }
 /*
---------------------------------- Find epsilon od DBSCAN -----------------------
+---------------------------------------------------------------
+---------------------- Find epsilon od DBSCAN -----------------
+---------------------------------------------------------------
 */
 float calculatePointDistance(const Point &p1, const Point &p2)
 {
@@ -499,9 +514,6 @@ float findElbowPoint(float kDistances[], int numPoints)
         averageElbowDistance = sumElbowDistances / elbowIndices.size();
     }
 
-    Serial.print("Average Elbow Distance: ");
-    Serial.println(averageElbowDistance);
-
     return averageElbowDistance;
 }
 
@@ -534,13 +546,12 @@ float findKneePoint(float kDistances[], int numPoints)
         averageKneeDistance = sumKneeDistances / kneeIndices.size();
     }
 
-    Serial.print("Average Knee Distance: ");
-    Serial.println(averageKneeDistance);
-
     return averageKneeDistance;
 }
 /*
---------------------------------- Info of clusters -----------------------
+----------------------------------------------------------------
+---------------------- Info of clusters ------------------------
+----------------------------------------------------------------
 */
 void gather_clusters_info(std::vector<ClusterInfo> &clusters)
 {
@@ -549,7 +560,7 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
     // Initialize cluster data
     for (int i = 0; i < MAX_CLUSTERS; ++i)
     {
-        clusterData[i] = {0, 0, 0, 0, 0, -1, 0, FLT_MAX, -1}; // Initialize minDistance with FLT_MAX
+        clusterData[i] = {0, 0, 0, 0, 0, -1, 0, 0, FLT_MAX, -1}; // Initialize minDistance with FLT_MAX
     }
 
     // Iterating through each point
@@ -581,6 +592,13 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
                 {
                     clusterData[clusterId].corePointIndex = i;
                     clusterData[clusterId].corePointNumNeighbors = numNeighbors;
+
+                    // Retrieve and store the distance of the core point
+                    int corePointArrayIndex = abs(points[i].angle) / FOV; // Adjust this calculation as per your logic
+                    if (corePointArrayIndex < sizeof(savedDistances) / sizeof(savedDistances[0]))
+                    {
+                        clusterData[clusterId].corePointDistance = savedDistances[corePointArrayIndex];
+                    }
                 }
             }
         }
@@ -600,37 +618,29 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
 
 void printClustersInfo(const std::vector<ClusterInfo> &clusters, int sweep)
 {
-    Serial.print("Sweep ");
-    Serial.print(sweep);
-    Serial.println(" Cluster Information:");
-
     for (const auto &cluster : clusters)
     {
-        Serial.print("Cluster Centroid: (");
-        Serial.print(cluster.centroidX);
-        Serial.print(", ");
-        Serial.print(cluster.centroidY);
-        Serial.println(")");
-        Serial.print("Sum X: ");
-        Serial.print(cluster.sumX);
-        Serial.print(", Sum Y: ");
-        Serial.println(cluster.sumY);
+        // Serial.print("Cluster Centroid: (");
+        // Serial.print(cluster.centroidX);
+        // Serial.print(", ");
+        // Serial.print(cluster.centroidY);
+        // Serial.print(")");
+        // Serial.print(" , ");
         Serial.print("Number of Points: ");
-        Serial.println(cluster.count);
-        Serial.print("Core Point Index: ");
-        Serial.println(cluster.corePointIndex);
-        Serial.print("Core Point Num Neighbors: ");
-        Serial.println(cluster.corePointNumNeighbors);
-        Serial.print("Minimum Distance: ");
+        Serial.print(cluster.count);
+        Serial.print(" , Core Point Num Neighbors: ");
+        Serial.print(cluster.corePointNumNeighbors);
+        Serial.print(" , Core Point distance: ");
+        Serial.print(cluster.corePointDistance);
+        Serial.print(" , Minimum Distance: ");
         Serial.println(cluster.minDistance);
-        Serial.print("Min Distance Point Index: ");
-        Serial.println(cluster.minDistancePointIndex);
-        Serial.println("-----------------------------------");
     }
 }
 
 /*
---------------------------------- Read data from sensor -----------------------
+-----------------------------------------------------------------
+---------------------- Read data from sensor --------------------
+-----------------------------------------------------------------
 */
 int get_distance()
 {
@@ -700,7 +710,6 @@ int sensor_measurement()
         }
         else
         {
-            // SerialPort.println("No valid object detected");
             measurement = -1;
         }
 
@@ -761,7 +770,11 @@ void sortArray(int arr[], int numElements)
     }
 }
 
-/*--------------ESP info-performance-----------*/
+/*
+---------------------------------------------
+--------------ESP info-performance-----------
+---------------------------------------------
+*/
 void reportMemory()
 {
     // Report Free Heap Memory
