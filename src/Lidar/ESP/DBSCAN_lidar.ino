@@ -28,7 +28,7 @@ const int numSamples = 3; // number of samples for one reading
 #define FOV 2             // Field of View of the sensor
 #define full_FOV 180
 #define MAX_POINTS (full_FOV / FOV) + 1 // Adjust based on maximum expected number of points
-
+#define Max_distance_range 6000         // it is maximum reading the sensor give here 6m in mm
 /* ---------- Servo variables ---------- */
 int controle = 2;    // Pin on the bord for control signal
 int feedbackPin = 4; // Pin on the bord for the feedback if it is used
@@ -61,7 +61,7 @@ struct ClusterInfo
 };
 float globalMaxCorePointDistance = 0;
 float globalMaxNumberOfPoints = 0;
-float globalMaxMinDistance = FLT_MAX;
+float globalMaxMinDistance = Max_distance_range;
 
 /* ----------  K-distance to define espsilon of DBSCAN parameters ---------- */
 const int K = minPoints;
@@ -82,9 +82,10 @@ struct Point
     int clusterId = UNCLASSIFIED;
 };
 Point points[MAX_POINTS];
-int savedDistances[(full_FOV / FOV) + 1]; // Array to store distances at each FOV step
-// +1 because 18/18=10 (0 to 162) and we need one element for the read of 180
-bool isFirstReading[full_FOV / FOV + 1]; // Array to track if it's the first reading for each position
+// int savedDistances[(full_FOV / FOV) + 1]; // Array to store distances at each FOV step
+// // +1 because 18/18=10 (0 to 162) and we need one element for the read of 180
+std::vector<int> savedDistances;  // Vector to store distances at each FOV step
+std::vector<bool> isFirstReading; // Vector to track if it's the first reading for each position
 
 /* ----------  Initialization ---------- */
 VL53L4CX sensor_vl53l4cx_sat(&DEV_I2C, 2);
@@ -115,7 +116,6 @@ void printClustersInfo(const std::vector<ClusterInfo> &clusters, int sweep);
 int get_distance();
 int sensor_measurement();
 int calculateMedianDistance(int samples[], int numSamples);
-int updateAverage(int currentAverage, int newDistance, bool isFirstReading);
 void sortArray(int arr[], int numElements);
 void reportMemory();
 
@@ -135,11 +135,6 @@ void setup()
     myservo.setPeriodHertz(50);
     myservo.attach(controle); // Attach the servo on GPIO 4
     myservo.write(0);         // Set initial position of servo to 0 degrees
-    // first reading passage
-    for (int i = 0; i < sizeof(isFirstReading) / sizeof(isFirstReading[0]); i++)
-    {
-        isFirstReading[i] = true;
-    }
 }
 
 void loop()
@@ -193,13 +188,20 @@ void move_collect_data(int start_point, int end_point)
         int distance = get_distance();
         if (distance > 0 && numPoints < MAX_POINTS)
         { // Check if the reading is valid
-            int arrayIndex = abs(servoPosition) / FOV;
-            savedDistances[arrayIndex] = updateAverage(savedDistances[arrayIndex], distance, isFirstReading[arrayIndex]);
-            isFirstReading[arrayIndex] = false;
+            if (numPoints >= savedDistances.size())
+            {
+                // First reading at this index
+                savedDistances.push_back(distance);
+            }
+            else
+            {
+                // Update existing value with new average
+                savedDistances[numPoints] = (savedDistances[numPoints] + distance) / 2;
+            }
 
             // Convert valid polar coordinates to Cartesian and store in the array
-            points[numPoints] = polarToCartesian(servoPosition, savedDistances[arrayIndex]);
-            // print_position_distance(arrayIndex, servoPosition, savedDistances[arrayIndex]);
+            points[numPoints] = polarToCartesian(servoPosition, savedDistances[numPoints]);
+            // print_position_distance(numPoints, servoPosition, savedDistances[numPoints]);
 
             numPoints++; // Increment the number of points
         }
@@ -260,12 +262,11 @@ void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
 
 void resetData()
 {
+    // Reset savedDistances and isFirstReading for each element
+    savedDistances.clear();
+    isFirstReading.clear();
     for (int i = 0; i < MAX_POINTS; i++)
     {
-        // Reset savedDistances and isFirstReading for each element
-        savedDistances[i] = 0;
-        isFirstReading[i] = true;
-
         // Reset the points array
         points[i] = Point();
         points[i].clusterId = UNCLASSIFIED;
@@ -358,6 +359,7 @@ void expandCluster(int pointIndex, int clusterId, int *neighbors, int &numNeighb
         if (points[currNeighbor].clusterId == UNCLASSIFIED || points[currNeighbor].clusterId == NOISE)
         {
             points[currNeighbor].clusterId = clusterId;
+
             int newNeighbors[MAX_POINTS];
             int newNumNeighbors;
             getNeighbors(currNeighbor, newNeighbors, newNumNeighbors);
@@ -496,7 +498,7 @@ std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &cl
     for (size_t cluster1Index = 0; cluster1Index < clustersSweep1.size(); ++cluster1Index)
     {
         const auto &cluster1 = clustersSweep1[cluster1Index];
-        float minDistanceDiff = FLT_MAX;
+        float minDistanceDiff = Max_distance_range;
         float closestScoreDiff = FLT_MAX;
         int closestClusterIndex = -1;
 
@@ -558,7 +560,7 @@ std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &cl
             // Debugging: Print info about the unmerged cluster
 
             /*
-            Serial.print("No suitable merge for Sweep 1 Cluster ");
+             Serial.print("No suitable merge for Sweep 1 Cluster ");
             Serial.println(cluster1Index);
             */
         }
@@ -770,7 +772,7 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
     // Initialize cluster data
     for (int i = 0; i < MAX_CLUSTERS; ++i)
     {
-        clusterData[i] = {0, 0, 0, 0, 0, -1, 0, 0, FLT_MAX, -1, 0}; // Initialize minDistance with FLT_MAX
+        clusterData[i] = {0, 0, 0, 0, 0, -1, 0, 0, Max_distance_range, -1, 0}; // Initialize minDistance with FLT_MAX
     }
 
     // Iterating through each point
@@ -783,10 +785,10 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
             clusterData[clusterId].sumX += points[i].x;
             clusterData[clusterId].sumY += points[i].y;
             clusterData[clusterId].count++;
-
             // Check for minimum distance
-            if (savedDistances[i] < clusterData[clusterId].minDistance)
+            if (savedDistances[i] < clusterData[clusterId].minDistance && savedDistances[i] != 0)
             {
+
                 clusterData[clusterId].minDistance = savedDistances[i];
                 clusterData[clusterId].minDistancePointIndex = i;
             }
@@ -804,10 +806,9 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
                     clusterData[clusterId].corePointNumNeighbors = numNeighbors;
 
                     // Retrieve and store the distance of the core point
-                    int corePointArrayIndex = abs(points[i].angle) / FOV; // Adjust this calculation as per your logic
-                    if (corePointArrayIndex < sizeof(savedDistances) / sizeof(savedDistances[0]))
+                    if (i < savedDistances.size())
                     {
-                        clusterData[clusterId].corePointDistance = savedDistances[corePointArrayIndex];
+                        clusterData[clusterId].corePointDistance = savedDistances[i];
                     }
                 }
             }
@@ -945,20 +946,6 @@ int calculateMedianDistance(int samples[], int numSamples)
     else
     { // Even number of elements
         return (samples[numSamples / 2 - 1] + samples[numSamples / 2]) / 2;
-    }
-}
-
-int updateAverage(int currentAverage, int newDistance, bool isFirstReading)
-{
-    if (isFirstReading)
-    {
-        // If it's the first reading, just return the new distance
-        return newDistance;
-    }
-    else
-    {
-        // Otherwise, calculate the new average
-        return (currentAverage + newDistance) / 2;
     }
 }
 
