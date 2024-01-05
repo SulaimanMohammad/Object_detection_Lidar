@@ -59,6 +59,17 @@ struct ClusterInfo
     int sweep1Index; // Index of the cluster in clustersSweep1
     int sweep2Index; // Index of the cluster in clustersSweep2
 };
+
+/* ---------- TOPSIS parameters ---------- */
+float weightCorePointDistance = 0.5;
+float weightNumberOfPoints = 0.01;
+float weightMinDistance = 0.49;
+// First merge between 2 sweeps
+const float scoreMergeThreshold = 0.05; // Define a threshold for merging clusters based on TOPSIS score similarity
+const float distanceMergeThreshold = 200;
+// Second merge of the result of first one for general view of objects
+const float PostMergeTOPSIS_scoreThreshold = 0.02;
+const float PostMergeTOPSIS_distanceThreshold = 100;
 float globalMaxCorePointDistance = 0;
 float globalMaxNumberOfPoints = 0;
 float globalMaxMinDistance = Max_distance_range;
@@ -433,9 +444,6 @@ void Reverse_normalization(ClusterInfo &cluster)
 // Function to calculate TOPSIS score for each cluster
 void calculateTopsisScores(std::vector<ClusterInfo> &clusters)
 {
-    float weightCorePointDistance = 0.5;
-    float weightNumberOfPoints = 0.01;
-    float weightMinDistance = 0.49;
 
     // Normalize the cluster data
     normalizeClustersData(clusters);
@@ -492,9 +500,6 @@ std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &cl
     std::vector<bool> mergedSweep1(clustersSweep1.size(), false);
     std::vector<bool> mergedSweep2(clustersSweep2.size(), false);
 
-    // Define a threshold for merging clusters based on TOPSIS score similarity
-    const float scoreMergeThreshold = 0.05;
-    const float DISTANCE_THRESHOLD = 200;
     for (size_t cluster1Index = 0; cluster1Index < clustersSweep1.size(); ++cluster1Index)
     {
         const auto &cluster1 = clustersSweep1[cluster1Index];
@@ -524,7 +529,7 @@ std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &cl
             Serial.println(distanceDiff);
             */
 
-            if (distanceDiff < DISTANCE_THRESHOLD && scoreDiff < closestScoreDiff)
+            if (distanceDiff < distanceMergeThreshold && scoreDiff < closestScoreDiff)
             {
                 closestScoreDiff = scoreDiff;
                 minDistanceDiff = distanceDiff;
@@ -595,8 +600,6 @@ std::vector<ClusterInfo> mergeClustersPostTopsis(std::vector<ClusterInfo> &clust
 
     calculateTopsisScores(clusters); // Calculate TOPSIS scores for each cluster
 
-    const float TOPSIS_SCORE_THRESHOLD = 0.05; // Define thresholds
-    const float DISTANCE_THRESHOLD = 100;
     bool mergeHappened;
 
     do
@@ -620,7 +623,7 @@ std::vector<ClusterInfo> mergeClustersPostTopsis(std::vector<ClusterInfo> &clust
                         float scoreDiff = std::abs(clusters[i].topsisScore - clusters[j].topsisScore);
                         float distanceDiff = std::abs(clusters[i].minDistance - clusters[j].minDistance);
 
-                        if (scoreDiff < TOPSIS_SCORE_THRESHOLD && distanceDiff < DISTANCE_THRESHOLD && scoreDiff < bestMergeScore)
+                        if (scoreDiff < PostMergeTOPSIS_scoreThreshold && distanceDiff < PostMergeTOPSIS_distanceThreshold && scoreDiff < bestMergeScore)
                         {
                             bestMergeScore = scoreDiff;
                             bestMergePartner = j;
