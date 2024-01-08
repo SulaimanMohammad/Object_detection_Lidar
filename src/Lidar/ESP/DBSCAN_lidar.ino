@@ -28,7 +28,8 @@ const int numSamples = 3; // number of samples for one reading
 #define FOV 2             // Field of View of the sensor
 #define full_FOV 180
 #define MAX_POINTS (full_FOV / FOV) + 1 // Adjust based on maximum expected number of points
-#define Max_distance_range 6000         // it is maximum reading the sensor give here 6m in mm
+#define Sensor_range 6000               // it is maximum reading the sensor give here 6m in mm
+#define Limit_distance Sensor_range + (Sensor_range * 0.20)
 /* ---------- Servo variables ---------- */
 int controle = 2;    // Pin on the bord for control signal
 int feedbackPin = 4; // Pin on the bord for the feedback if it is used
@@ -72,7 +73,7 @@ const float PostMergeTOPSIS_scoreThreshold = 0.02;
 const float PostMergeTOPSIS_distanceThreshold = 100;
 float globalMaxCorePointDistance = 0;
 float globalMaxNumberOfPoints = 0;
-float globalMaxMinDistance = Max_distance_range;
+float globalMaxMinDistance = Limit_distance;
 
 /* ----------  K-distance to define espsilon of DBSCAN parameters ---------- */
 const int K = minPoints;
@@ -95,8 +96,8 @@ struct Point
 Point points[MAX_POINTS];
 // int savedDistances[(full_FOV / FOV) + 1]; // Array to store distances at each FOV step
 // // +1 because 18/18=10 (0 to 162) and we need one element for the read of 180
-std::vector<int> savedDistances;  // Vector to store distances at each FOV step
-std::vector<bool> isFirstReading; // Vector to track if it's the first reading for each position
+std::vector<int> savedDistances((full_FOV / FOV) + 1, Limit_distance); // Vector to store distances at each FOV step
+std::vector<bool> isFirstReading((full_FOV / FOV) + 1, true);          // Vector to track if it's the first reading for each position
 
 /* ----------  Initialization ---------- */
 VL53L4CX sensor_vl53l4cx_sat(&DEV_I2C, 2);
@@ -197,22 +198,24 @@ void move_collect_data(int start_point, int end_point)
         myservo.write(servoPosition);
         delay(50); // Wait for stabilization
         int distance = get_distance();
-        if (distance > 0 && numPoints < MAX_POINTS)
-        { // Check if the reading is valid
-            if (numPoints >= savedDistances.size())
+        if (distance > 0 && numPoints < MAX_POINTS) // Check if the reading is valid
+        {
+            int arrayIndex = abs(servoPosition) / FOV;
+            if (isFirstReading[arrayIndex] || savedDistances[arrayIndex] == Limit_distance)
             {
-                // First reading at this index
-                savedDistances.push_back(distance);
+                // If it's the first reading, just return the new distance
+                savedDistances[arrayIndex] = distance;
             }
             else
             {
-                // Update existing value with new average
-                savedDistances[numPoints] = (savedDistances[numPoints] + distance) / 2;
+                // Otherwise, calculate the new average
+                savedDistances[arrayIndex] = savedDistances[arrayIndex] + distance / 2.0;
             }
+            isFirstReading[arrayIndex] = false;
 
             // Convert valid polar coordinates to Cartesian and store in the array
-            points[numPoints] = polarToCartesian(servoPosition, savedDistances[numPoints]);
-            // print_position_distance(numPoints, servoPosition, savedDistances[numPoints]);
+            points[numPoints] = polarToCartesian(servoPosition, savedDistances[arrayIndex]);
+            print_position_distance(arrayIndex, servoPosition, savedDistances[arrayIndex]);
 
             numPoints++; // Increment the number of points
         }
@@ -273,11 +276,10 @@ void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
 
 void resetData()
 {
-    // Reset savedDistances and isFirstReading for each element
-    savedDistances.clear();
-    isFirstReading.clear();
     for (int i = 0; i < MAX_POINTS; i++)
     {
+        savedDistances[i] = 0;
+        isFirstReading[i] = true;
         // Reset the points array
         points[i] = Point();
         points[i].clusterId = UNCLASSIFIED;
@@ -503,7 +505,7 @@ std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &cl
     for (size_t cluster1Index = 0; cluster1Index < clustersSweep1.size(); ++cluster1Index)
     {
         const auto &cluster1 = clustersSweep1[cluster1Index];
-        float minDistanceDiff = Max_distance_range;
+        float minDistanceDiff = Limit_distance;
         float closestScoreDiff = FLT_MAX;
         int closestClusterIndex = -1;
 
@@ -815,7 +817,7 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
     // Initialize cluster data
     for (int i = 0; i < MAX_CLUSTERS; ++i)
     {
-        clusterData[i] = {0, 0, 0, 0, 0, -1, 0, 0, Max_distance_range, -1, 0}; // Initialize minDistance with FLT_MAX
+        clusterData[i] = {0, 0, 0, 0, 0, -1, 0, 0, Limit_distance, -1, 0}; // Initialize minDistance with FLT_MAX
     }
 
     // Iterating through each point
