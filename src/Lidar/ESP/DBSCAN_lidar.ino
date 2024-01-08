@@ -76,7 +76,7 @@ float globalMaxMinDistance = Max_distance_range;
 
 /* ----------  K-distance to define espsilon of DBSCAN parameters ---------- */
 const int K = minPoints;
-float coeff_elbow = 0.8; // 70%
+float coeff_elbow = 0;
 float coeff_Knee = 1 - coeff_elbow;
 struct KDistance
 {
@@ -733,7 +733,7 @@ float findElbowPoint(float kDistances[], int numPoints)
 }
 
 // Knee method ( consider many Elbows)
-float findKneePoint(float kDistances[], int numPoints)
+float findKneePoint_simple(float kDistances[], int numPoints)
 {
     std::vector<int> kneeIndices; // Store indices of all knee points
 
@@ -763,6 +763,46 @@ float findKneePoint(float kDistances[], int numPoints)
 
     return averageKneeDistance;
 }
+
+// this knee finder use Derivative-Based Method , Significant Knee Selection, Outlier Handling
+float findKneePoint(float kDistances[], int numPoints)
+{
+    if (numPoints < 3)
+    {
+        return -1; // Not enough points to determine a knee
+    }
+
+    // Handling Outliers: Using percentile-based approach
+    std::vector<float> sortedDistances(kDistances, kDistances + numPoints);
+    std::sort(sortedDistances.begin(), sortedDistances.end());
+    float lowerPercentile = sortedDistances[numPoints * 0.05]; // 5th percentile
+    float upperPercentile = sortedDistances[numPoints * 0.95]; // 95th percentile
+
+    // Finding points with significant change in slope (derivative-based)
+    float maxSlopeChange = 0;
+    int maxChangeIndex = -1;
+    for (int i = 1; i < numPoints - 1; ++i)
+    {
+        if (kDistances[i] < lowerPercentile || kDistances[i] > upperPercentile)
+        {
+            continue; // Skip outliers
+        }
+
+        float diff1 = kDistances[i] - kDistances[i - 1];
+        float diff2 = kDistances[i + 1] - kDistances[i];
+        float slopeChange = std::abs(diff1 - diff2);
+
+        if (diff1 * diff2 < 0 && slopeChange > maxSlopeChange)
+        {
+            maxSlopeChange = slopeChange;
+            maxChangeIndex = i;
+        }
+    }
+
+    // Return the knee point with the most significant change in slope
+    return (maxChangeIndex != -1) ? kDistances[maxChangeIndex] : -1;
+}
+
 /*
 ----------------------------------------------------------------
 ---------------------- Info of clusters ------------------------
