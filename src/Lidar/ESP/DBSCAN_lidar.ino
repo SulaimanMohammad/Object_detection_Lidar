@@ -24,7 +24,7 @@
 #define LedPin LED_BUILTIN
 
 /* ---------- Lidar variables ---------- */
-const int numSamples = 3; // number of samples for one reading
+const int numSamples = 1; // number of samples for one reading
 #define FOV 2             // Field of View of the sensor
 #define full_FOV 180
 #define MAX_POINTS (full_FOV / FOV) + 1 // Adjust based on maximum expected number of points
@@ -39,7 +39,7 @@ int servoPosition = 0; // Current position of the servo
 /* ---------- DBSCAN parameters ---------- */
 const int minPoints = 4;             // Number of close point to form cluster
 float angleWeight = 0.4;             // How imortant is the connectivity of the angle with distance
-float shift_margin_to_merge = 100;   // Max diffeence in distance between tow clusters core to merge them
+float shift_margin_to_merge = 300;   // Max diffeence in distance between tow clusters core to merge them
 float epsilon;                       // Dynamically defined by K-distance methode
 const int MAX_CLUSTERS = MAX_POINTS; // Maximum point of cluster
 int numPoints = 0;
@@ -49,22 +49,25 @@ struct ClusterInfo
 {
     float sumX, sumY;           // Coordinates for centroid
     float centroidX, centroidY; // Centroid coordinates
-    int count;                  // Count of points in the cluster
-    int corePointIndex;         // Index of the core point
-    float corePointDistance;    // Distance of the core point
-    int corePointNumNeighbors;  // Number of neighbors for the core point
-    float minDistance;          // Minimum distance in the cluster
-    int minDistancePointIndex;  // Index of the point with minimum distance
-    int sweep;                  // 1 for first sweep (0-180), 2 for second sweep (180-0)
+    float centerDistance;
+    int count;                 // Count of points in the cluster
+    int corePointIndex;        // Index of the core point
+    float corePointDistance;   // Distance of the core point
+    int corePointNumNeighbors; // Number of neighbors for the core point
+    float minDistance;         // Minimum distance in the cluster
+    int minDistancePointIndex; // Index of the point with minimum distance
+    int sweep;                 // 1 for first sweep (0-180), 2 for second sweep (180-0)
     float topsisScore;
     int sweep1Index; // Index of the cluster in clustersSweep1
     int sweep2Index; // Index of the cluster in clustersSweep2
 };
 
 /* ---------- TOPSIS parameters ---------- */
-float weightCorePointDistance = 0.5;
-float weightNumberOfPoints = 0.01;
-float weightMinDistance = 0.49;
+float weightCorePointDistance = 0.35 + 0.35;
+float weightNumberOfPoints = 0.05;
+float weightMinDistance = 0.3;
+float weightCenterDistance = 0;
+
 // First merge between 2 sweeps
 const float scoreMergeThreshold = 0.05; // Define a threshold for merging clusters based on TOPSIS score similarity
 const float distanceMergeThreshold = 200;
@@ -73,6 +76,7 @@ const float PostMergeTOPSIS_scoreThreshold = 0.02;
 const float PostMergeTOPSIS_distanceThreshold = 100;
 float globalMaxCorePointDistance = 0;
 float globalMaxNumberOfPoints = 0;
+float globalMaxCenterDistance = 0;
 float globalMaxMinDistance = Limit_distance;
 
 /* ----------  K-distance to define espsilon of DBSCAN parameters ---------- */
@@ -215,7 +219,7 @@ void move_collect_data(int start_point, int end_point)
 
             // Convert valid polar coordinates to Cartesian and store in the array
             points[numPoints] = polarToCartesian(servoPosition, savedDistances[arrayIndex]);
-            print_position_distance(arrayIndex, servoPosition, savedDistances[arrayIndex]);
+            // print_position_distance(arrayIndex, servoPosition, savedDistances[arrayIndex]);
 
             numPoints++; // Increment the number of points
         }
@@ -424,15 +428,16 @@ void normalizeClustersData(std::vector<ClusterInfo> &clusters)
     {
         globalMaxCorePointDistance = std::max(globalMaxCorePointDistance, cluster.corePointDistance);
         globalMaxNumberOfPoints = std::max(globalMaxNumberOfPoints, float(cluster.count));
-        globalMaxMinDistance = std::min(globalMaxMinDistance, cluster.minDistance);
+        globalMaxMinDistance = std::max(globalMaxMinDistance, cluster.minDistance);
+        globalMaxCenterDistance = std::max(globalMaxCenterDistance, cluster.centerDistance);
     }
-
     // Normalize the data
     for (auto &cluster : clusters)
     {
         cluster.corePointDistance /= globalMaxCorePointDistance;
         cluster.count = float(cluster.count) / globalMaxNumberOfPoints;
         cluster.minDistance /= globalMaxMinDistance;
+        cluster.centerDistance /= globalMaxCenterDistance;
     }
 }
 
@@ -441,6 +446,7 @@ void Reverse_normalization(ClusterInfo &cluster)
     cluster.corePointDistance *= globalMaxCorePointDistance;
     cluster.count *= globalMaxNumberOfPoints;
     cluster.minDistance *= globalMaxMinDistance;
+    cluster.centerDistance *= globalMaxCenterDistance;
 }
 
 // Function to calculate TOPSIS score for each cluster
@@ -453,17 +459,24 @@ void calculateTopsisScores(std::vector<ClusterInfo> &clusters)
     // Calculate the ideal and negative-ideal solutions
     float idealCorePointDistance = 1, idealNumberOfPoints = 1, idealMinDistance = 1;
     float negIdealCorePointDistance = 0, negIdealNumberOfPoints = 0, negIdealMinDistance = 0;
-
+    float idealCenterDistance = 1;
+    float negIdealCenterDistance = 0;
     // Calculate the separation measures and the relative closeness
     for (auto &cluster : clusters)
     {
-        float distanceToIdeal = sqrt(pow(weightCorePointDistance * (idealCorePointDistance - cluster.corePointDistance), 2) +
-                                     pow(weightNumberOfPoints * (idealNumberOfPoints - cluster.count), 2) +
-                                     pow(weightMinDistance * (idealMinDistance - cluster.minDistance), 2));
+        float distanceToIdeal = sqrt(
+            pow(weightCorePointDistance * (idealCorePointDistance - cluster.corePointDistance), 2) +
+            pow(weightNumberOfPoints * (idealNumberOfPoints - cluster.count), 2) +
+            pow(weightMinDistance * (idealMinDistance - cluster.minDistance), 2) +
+            pow(weightCenterDistance * (idealCenterDistance - cluster.centerDistance), 2) // Include centerDistance
+        );
 
-        float distanceToNegIdeal = sqrt(pow(weightCorePointDistance * (cluster.corePointDistance - negIdealCorePointDistance), 2) +
-                                        pow(weightNumberOfPoints * (cluster.count - negIdealNumberOfPoints), 2) +
-                                        pow(weightMinDistance * (cluster.minDistance - negIdealMinDistance), 2));
+        float distanceToNegIdeal = sqrt(
+            pow(weightCorePointDistance * (cluster.corePointDistance - negIdealCorePointDistance), 2) +
+            pow(weightNumberOfPoints * (cluster.count - negIdealNumberOfPoints), 2) +
+            pow(weightMinDistance * (cluster.minDistance - negIdealMinDistance), 2) +
+            pow(weightCenterDistance * (cluster.centerDistance - negIdealCenterDistance), 2) // Include centerDistance
+        );
 
         float denominator = distanceToNegIdeal + distanceToIdeal;
         if (denominator == 0)
@@ -817,7 +830,7 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
     // Initialize cluster data
     for (int i = 0; i < MAX_CLUSTERS; ++i)
     {
-        clusterData[i] = {0, 0, 0, 0, 0, -1, 0, 0, Limit_distance, -1, 0}; // Initialize minDistance with FLT_MAX
+        clusterData[i] = {0, 0, 0, 0, 0, 0, -1, 0, 0, Limit_distance, -1, 0}; // Initialize minDistance with FLT_MAX
     }
 
     // Iterating through each point
@@ -867,6 +880,7 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
         {
             clusterData[i].centroidX = clusterData[i].sumX / clusterData[i].count;
             clusterData[i].centroidY = clusterData[i].sumY / clusterData[i].count;
+            clusterData[i].centerDistance = sqrt(pow(clusterData[i].centroidX, 2) + pow(clusterData[i].centroidY, 2));
             clusters.push_back(clusterData[i]);
         }
     }
@@ -876,12 +890,15 @@ void printClustersInfo(const std::vector<ClusterInfo> &clusters, int sweep)
 {
     for (const auto &cluster : clusters)
     {
-        // Serial.print("Cluster Centroid: (");
-        // Serial.print(cluster.centroidX);
-        // Serial.print(", ");
-        // Serial.print(cluster.centroidY);
-        // Serial.print(")");
-        // Serial.print(" , ");
+        Serial.print("Cluster Centroid: (");
+        Serial.print(cluster.centroidX);
+        Serial.print(", ");
+        Serial.print(cluster.centroidY);
+        Serial.print(")");
+        Serial.print(" , ");
+        Serial.print("Distance: ");
+        Serial.print(cluster.centerDistance);
+        Serial.print(" , ");
         Serial.print("Number of Points: ");
         Serial.print(cluster.count);
         Serial.print(" , Core Point Num Neighbors: ");
