@@ -48,17 +48,17 @@ struct ClusterInfo
 {
     float sumX, sumY, sumZ;                // Coordinates for centroid
     float centroidX, centroidY, centroidZ; // Centroid coordinates
-    float centerDistance;
-    int count;                 // Count of points in the cluster
-    int corePointIndex;        // Index of the core point
-    float corePointDistance;   // Distance of the core point
-    int corePointNumNeighbors; // Number of neighbors for the core point
-    float minDistance;         // Minimum distance in the cluster
-    int minDistancePointIndex; // Index of the point with minimum distance
-    int sweep;                 // 1 for first sweep (0-180), 2 for second sweep (180-0)
-    float topsisScore;
-    int sweep1Index; // Index of the cluster in clustersSweep1
-    int sweep2Index; // Index of the cluster in clustersSweep2
+    float centerDistance;                  // DIstance of center of cluster from sensor
+    int count;                             // Count of points in the cluster
+    int corePointIndex;                    // Index of the core point
+    float corePointDistance;               // Distance of the core point
+    int corePointNumNeighbors;             // Number of neighbors for the core point
+    float minDistance;                     // Minimum distance in the cluster
+    int minDistancePointIndex;             // Index of the point with minimum distance
+    int sweep;                             // 1 for first sweep (0-180), 2 for second sweep (180-0)
+    float topsisScore;                     // scores based on criteria
+    int sweep1Index;                       // Index of the cluster in clustersSweep1
+    int sweep2Index;                       // Index of the cluster in clustersSweep2
 };
 int numberOfClusters;
 /* ---------- TOPSIS parameters ---------- */
@@ -113,68 +113,14 @@ void reorderPointsForConsistentProcessing();                                    
 Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance);           // Convert point from ( angle, distance) to (x,y)
 float calculateDistance(const Point &p1, const Point &p2);                           // Calculate the distance between 2 points considering the distance and the angle
 void DBSCAN();
-// void expandCluster(int pointIndex, int clusterId, int *neighbors, int &numNeighbors);
-// void getNeighbors(int pointIndex, int *neighbors, int &numNeighbors);
-// void getNeighbors(int pointIndex, std::vector<int> &neighbors);
-// void expandCluster(int pointIndex, int clusterId, std::vector<int> &neighbors);
-void normalizeClustersData(std::vector<ClusterInfo> &clusters);
-void calculateTopsisScores(std::vector<ClusterInfo> &clusters);
-ClusterInfo mergeTwoClusters(const ClusterInfo &c1, const ClusterInfo &c2);
 std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &clustersSweep1, std::vector<ClusterInfo> &clustersSweep2);
-std::vector<ClusterInfo> mergeClustersPostTopsis(std::vector<ClusterInfo> &clusters);
-float findKneePoint(float kDistances[], int numPoints);
-float findElbowPoint(float kDistances[], int numPoints);
-void calculateKDistance(Point points[], int numPoints, float kDistances[]);
-float calculatePointDistance(const Point &p1, const Point &p2);
+void calculateKDistance_set_Epsilon(Point points[], int numPoints, float kDistances[]);
 void print_kDistance(float kDistances[], int numPoints);
 void gather_clusters_info(std::vector<ClusterInfo> &clusters);
 void printClustersInfo(const std::vector<ClusterInfo> &clusters, int sweep);
 int get_distance();
-int sensor_measurement();
-int calculateMedianDistance(int samples[], int numSamples);
-void sortArray(int arr[], int numElements);
 void reportMemory();
 
-int estimateNoisePoints(float prelimEpsilon)
-{
-    int noisePointCount = 0;
-    for (int i = 0; i < numPoints; ++i)
-    {
-        int neighborCount = 0;
-        for (int j = 0; j < numPoints; ++j)
-        {
-            if (i != j && calculateDistance(points[i], points[j]) < prelimEpsilon)
-            {
-                neighborCount++;
-            }
-        }
-        if (neighborCount < minPoints)
-        {
-            noisePointCount++;
-        }
-    }
-    return noisePointCount;
-}
-
-void adjustEpsilonBasedOnFeedback(int const Elbow_value, int const Knee_value)
-{
-
-    int noisePoints = estimateNoisePoints(std::max(Elbow_value, Knee_value));
-    Serial.print("\n noisePoints: ");
-    Serial.println(noisePoints); // Adjust epsilon based on the ratio of noise points
-    float noiseRatio = static_cast<float>(noisePoints) / MAX_POINTS;
-    Serial.print("\n estimated Noise Ratio: ");
-    Serial.println(noiseRatio); // Adjust epsilon based on the ratio of noise points
-
-    if (noiseRatio > 0.2) // too much noise
-    {                     // someThreshold is a value you decide
-        epsilon = std::min(Elbow_value, Knee_value);
-    }
-    else if (noiseRatio < 0.2)
-    {                                                // anotherThreshold < someThreshold
-        epsilon = std::max(Elbow_value, Knee_value); // Reduce epsilon
-    }
-}
 void setup()
 {
     SerialPort.begin(115200); // Initialize serial for output.
@@ -199,26 +145,26 @@ void loop()
     Serial.println(" Sweep 0-180");
     move_collect_data(pan_start_range, pan_end_range);
     std::vector<ClusterInfo> clustersSweep1;
-    // detect_objects_clustering(clustersSweep1);
-    // printClustersInfo(clustersSweep1, 1); // After first sweep
+    detect_objects_clustering(clustersSweep1);
+    printClustersInfo(clustersSweep1, 1);
 
     Serial.println(" Sweep 180-0");
     move_collect_data(pan_end_range, pan_start_range);
     reorderPointsForConsistentProcessing(); // Reorder points for consistent processing
 
     std::vector<ClusterInfo> clustersSweep2;
-    // detect_objects_clustering(clustersSweep2);
-    // printClustersInfo(clustersSweep2, 2);
+    detect_objects_clustering(clustersSweep2);
+    printClustersInfo(clustersSweep2, 2);
 
-    // std::vector<ClusterInfo> mergedClusters = mergeClustersBasedOnTopsis(clustersSweep1, clustersSweep2);
-    // Serial.println("            Merged Cluster Info: ");
-    // for (const auto &cluster : mergedClusters)
-    // {
-    //     Serial.print("CorePointDistance: ");
-    //     Serial.print(cluster.corePointDistance);
-    //     Serial.print(" \tMin Distance: ");
-    //     Serial.println(cluster.minDistance);
-    // }
+    std::vector<ClusterInfo> mergedClusters = mergeClustersBasedOnTopsis(clustersSweep1, clustersSweep2);
+    Serial.println("            Merged Cluster Info: ");
+    for (const auto &cluster : mergedClusters)
+    {
+        Serial.print("CorePointDistance: ");
+        Serial.print(cluster.corePointDistance);
+        Serial.print(" \tMin Distance: ");
+        Serial.println(cluster.minDistance);
+    }
     resetData();
     delay(500); // Wait for stabilization
     Serial.println("-------------------------------------------------");
@@ -232,7 +178,6 @@ void loop()
 */
 void move_collect_data(int start_point, int end_point)
 {
-    // numPoints = 0;
     int index = 0;
     int step = (start_point < end_point) ? object_FOV : -object_FOV; // Determine the direction based on start and end values
     bool reverse = (start_point < end_point) ? false : true;         // Determine the direction based on start and end values
@@ -247,8 +192,6 @@ void move_collect_data(int start_point, int end_point)
         delay(50); // Wait for stabilization
 
         bool isEvenPanStep = (pan_servoPosition / object_FOV) % 2 == 0;
-        // int tiltStart = isEvenPanStep ? tilt_start_range : tilt_end_range;
-        // int tiltEnd = isEvenPanStep ? tilt_end_range : tilt_start_range;
 
         int tiltStart, tiltEnd;
 
@@ -308,8 +251,6 @@ void move_collect_data(int start_point, int end_point)
             Serial.print(calculateDistance(points[index], points[index - 1]));
             Serial.print(", Distance 2D: ");
             Serial.println(points[index].distance);
-
-            // numPoints++; // Increment the number of points
         }
 
         // Additional check to ensure the loop includes the end point
@@ -317,16 +258,14 @@ void move_collect_data(int start_point, int end_point)
         {
             break;
         }
-        // delay(50);
     }
 }
 
 void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
 {
-    // Calculate k-distance for each point
-    calculateKDistance(points, numPoints);
+    // Calculate k-distance for each point, Calculate espilon
+    calculateKDistance_set_Epsilon(points, numPoints);
     // print_kDistance(kDistances, numPoints);
-    // Calculate espilon
 
     Serial.print(",Chosed Epsilon= ");
     Serial.println(epsilon);
@@ -350,7 +289,6 @@ void resetData()
     for (int i = 0; i < MAX_POINTS; i++)
     {
         points[i] = Point(); // Reset each point (assuming default constructor sets it to a default state)
-        // Assuming Point3D structure has these properties
         points[i].clusterId = UNCLASSIFIED;
         points[i].visited = false;
     }
@@ -405,13 +343,11 @@ Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance)
 // Function to calculate Euclidean distance between two points with angle consideration
 float calculateDistance(const Point &p1, const Point &p2)
 {
-
     // Calculate the Euclidean distance in 3D
     float spatialDist = sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) + pow(p1.z - p2.z, 2));
     // Calculate angular difference
     float panDiff = abs(p1.pan_angle - p2.pan_angle);
     float tiltDiff = abs(p1.tilt_angle - p2.tilt_angle);
-
     // Combine the distances (you might need to scale these appropriately)
     return spatialDist; //+ panDiff + tiltDiff;
 }
@@ -427,10 +363,6 @@ void getNeighbors(int pointIndex, std::vector<int> &neighbors)
     neighbors.clear();
     for (int i = 0; i < numPoints; ++i)
     {
-        if (points[i].distance == 0 || points[i].distance == Limit_distance)
-        {
-            continue;
-        }
         if (calculateDistance(points[pointIndex], points[i]) <= epsilon)
         {
             neighbors.push_back(i);
@@ -442,7 +374,7 @@ void expandCluster(int pointIndex, int clusterId, std::vector<int> &neighbors)
 {
     points[pointIndex].clusterId = clusterId;
 
-    for (size_t i = 0; i < neighbors.size(); ++i)
+    for (int i = 0; i < neighbors.size(); ++i)
     {
         int currNeighbor = neighbors[i];
         if (points[currNeighbor].clusterId == UNCLASSIFIED || points[currNeighbor].clusterId == NOISE)
@@ -557,10 +489,6 @@ void calculateTopsisScores(std::vector<ClusterInfo> &clusters)
         cluster.topsisScore = distanceToNegIdeal / (distanceToNegIdeal + distanceToIdeal);
         Reverse_normalization(cluster);
     }
-
-    // Sort the clusters based on their TOPSIS scores
-    // std::sort(clusters.begin(), clusters.end(), [](const ClusterInfo &a, const ClusterInfo &b)
-    //           { return a.topsisScore > b.topsisScore; });
 }
 
 ClusterInfo mergeTwoClusters(const ClusterInfo &c1, const ClusterInfo &c2)
@@ -569,12 +497,67 @@ ClusterInfo mergeTwoClusters(const ClusterInfo &c1, const ClusterInfo &c2)
     mergedCluster.sumX = (c1.sumX + c2.sumX) / 2.0;
     mergedCluster.sumY = (c1.sumY + c2.sumY) / 2.0;
     mergedCluster.count = (c1.count + c2.count) / 2.0;
-    // mergedCluster.corePointDistance = (c1.corePointDistance + c2.corePointDistance) / 2;
     mergedCluster.corePointDistance = std::min(c1.corePointDistance, c2.corePointDistance);
     mergedCluster.minDistance = std::min(c1.minDistance, c2.minDistance);
     return mergedCluster;
 }
 
+std::vector<ClusterInfo> mergeClustersPostTopsis(std::vector<ClusterInfo> &clusters)
+{
+    if (clusters.size() <= 1)
+    {
+        return clusters; // No merging needed if there's one or no clusters
+    }
+
+    calculateTopsisScores(clusters); // Calculate TOPSIS scores for each cluster
+
+    bool mergeHappened;
+
+    do
+    {
+        mergeHappened = false;
+        std::vector<ClusterInfo> newClusters;
+        std::vector<bool> merged(clusters.size(), false);
+
+        for (size_t i = 0; i < clusters.size(); ++i)
+        {
+            if (!merged[i])
+            {
+                ClusterInfo bestMergeCluster = clusters[i];
+                int bestMergePartner = -1;
+                float bestMergeScore = FLT_MAX;
+
+                for (size_t j = i + 1; j < clusters.size(); ++j)
+                {
+                    if (!merged[j])
+                    {
+                        float scoreDiff = std::abs(clusters[i].topsisScore - clusters[j].topsisScore);
+                        float distanceDiff = std::abs(clusters[i].minDistance - clusters[j].minDistance);
+
+                        if (scoreDiff < PostMergeTOPSIS_scoreThreshold && distanceDiff < PostMergeTOPSIS_distanceThreshold && scoreDiff < bestMergeScore)
+                        {
+                            bestMergeScore = scoreDiff;
+                            bestMergePartner = j;
+                        }
+                    }
+                }
+
+                if (bestMergePartner != -1)
+                {
+                    bestMergeCluster = mergeTwoClusters(bestMergeCluster, clusters[bestMergePartner]); // Assumes a function to merge two clusters
+                    merged[bestMergePartner] = true;
+                    mergeHappened = true;
+                }
+
+                newClusters.push_back(bestMergeCluster);
+            }
+        }
+
+        clusters = newClusters;
+    } while (mergeHappened);
+
+    return clusters;
+}
 std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &clustersSweep1, std::vector<ClusterInfo> &clustersSweep2)
 {
     // Calculate scores for all clusters
@@ -676,193 +659,11 @@ std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &cl
     return mergeClustersPostTopsis(mergedClusters);
 }
 
-std::vector<ClusterInfo> mergeClustersPostTopsis(std::vector<ClusterInfo> &clusters)
-{
-    if (clusters.size() <= 1)
-    {
-        return clusters; // No merging needed if there's one or no clusters
-    }
-
-    calculateTopsisScores(clusters); // Calculate TOPSIS scores for each cluster
-
-    bool mergeHappened;
-
-    do
-    {
-        mergeHappened = false;
-        std::vector<ClusterInfo> newClusters;
-        std::vector<bool> merged(clusters.size(), false);
-
-        for (size_t i = 0; i < clusters.size(); ++i)
-        {
-            if (!merged[i])
-            {
-                ClusterInfo bestMergeCluster = clusters[i];
-                int bestMergePartner = -1;
-                float bestMergeScore = FLT_MAX;
-
-                for (size_t j = i + 1; j < clusters.size(); ++j)
-                {
-                    if (!merged[j])
-                    {
-                        float scoreDiff = std::abs(clusters[i].topsisScore - clusters[j].topsisScore);
-                        float distanceDiff = std::abs(clusters[i].minDistance - clusters[j].minDistance);
-
-                        if (scoreDiff < PostMergeTOPSIS_scoreThreshold && distanceDiff < PostMergeTOPSIS_distanceThreshold && scoreDiff < bestMergeScore)
-                        {
-                            bestMergeScore = scoreDiff;
-                            bestMergePartner = j;
-                        }
-                    }
-                }
-
-                if (bestMergePartner != -1)
-                {
-                    bestMergeCluster = mergeTwoClusters(bestMergeCluster, clusters[bestMergePartner]); // Assumes a function to merge two clusters
-                    merged[bestMergePartner] = true;
-                    mergeHappened = true;
-                }
-
-                newClusters.push_back(bestMergeCluster);
-            }
-        }
-
-        clusters = newClusters;
-    } while (mergeHappened);
-
-    return clusters;
-}
-/*
----------------------------------------------------------------
-------------- K-Distance to define epsilon od DBSCAN ----------
----------------------------------------------------------------
-*/
-void smoothMovingAverage(float kDistances[], int numPoints)
-{
-    int windowSize = 10;
-    std::vector<float>
-        smoothed(numPoints, 0);
-    for (int i = 0; i < numPoints; ++i)
-    {
-        float sum = 0;
-        int count = 0;
-        for (int j = std::max(0, i - windowSize / 2); j <= std::min(i + windowSize / 2, numPoints - 1); ++j)
-        {
-            sum += kDistances[j];
-            count++;
-        }
-        smoothed[i] = sum / count;
-    }
-    std::copy(smoothed.begin(), smoothed.end(), kDistances);
-}
-
-void smoothGaussian(float kDistances[], int numPoints)
-{
-    int windowSize = 3;
-    // Check for valid window size
-    if (windowSize <= 0 || windowSize > numPoints)
-        return;
-
-    std::vector<float> smoothed(numPoints, 0);
-    std::vector<float> kernel(windowSize, 0);
-
-    // Compute the standard deviation, sigma
-    float sigma = windowSize / 6.0; // A common choice is to set sigma as windowSize / 6
-    float sumKernel = 0;
-
-    // Generate Gaussian kernel
-    for (int i = 0; i < windowSize; ++i)
-    {
-        float x = i - windowSize / 2;
-        kernel[i] = exp(-0.5 * pow(x / sigma, 2));
-        sumKernel += kernel[i];
-    }
-
-    // Normalize the kernel
-    for (auto &k : kernel)
-        k /= sumKernel;
-
-    // Apply Gaussian smoothing
-    for (int i = 0; i < numPoints; ++i)
-    {
-        float weightedSum = 0;
-        for (int j = 0; j < windowSize; ++j)
-        {
-            int index = i + j - windowSize / 2;
-            if (index >= 0 && index < numPoints)
-            {
-                weightedSum += kDistances[index] * kernel[j];
-            }
-        }
-        smoothed[i] = weightedSum;
-    }
-
-    // Copy the smoothed values back to the original array
-    std::copy(smoothed.begin(), smoothed.end(), kDistances);
-}
-
-// Function to calculate the k-distance for each point
-void calculateKDistance(Point points[], int numPoints)
-{
-    float kDistances[MAX_POINTS];
-
-    for (int i = 0; i < numPoints; ++i)
-    {
-        std::vector<KDistance> distances;
-        for (int j = 0; j < numPoints; ++j)
-        {
-            if (i != j)
-            {
-                float dist = calculatePointDistance(points[i], points[j]);
-                distances.push_back({dist, j});
-            }
-        }
-        std::sort(distances.begin(), distances.end(), [](const KDistance &a, const KDistance &b)
-                  { return a.distance < b.distance; });
-        if (distances.size() >= K)
-        {
-            kDistances[i] = distances[K - 1].distance;
-        }
-        else
-        {
-            kDistances[i] = -1; // Indicate insufficient neighbors
-        }
-    }
-
-    // smoothMovingAverage(kDistances, numPoints);
-    // smoothGaussian(kDistances, numPoints);
-    int Elbow_value = findElbowPoint(kDistances, numPoints);
-    int Knee_value = findKneePoint(kDistances, numPoints);
-    // epsilon = coeff_elbow * Elbow_value + coeff_Knee * Knee_value;
-    Serial.print("Elbow_value= ");
-    Serial.print(Elbow_value);
-    Serial.print(" ,Knee_value= ");
-    Serial.print(Knee_value);
-    adjustEpsilonBasedOnFeedback(Elbow_value, Knee_value);
-}
-
-void print_kDistance(float kDistances[], int numPoints)
-{
-    for (int i = 0; i < numPoints; ++i)
-    {
-        if (kDistances[i] != -1)
-        {
-            Serial.print("Point ");
-            Serial.print(i);
-            Serial.print(" k-distance: ");
-            Serial.println(kDistances[i]);
-        }
-    }
-}
 /*
 ---------------------------------------------------------------
 ---------------------- Find epsilon od DBSCAN -----------------
 ---------------------------------------------------------------
 */
-float calculatePointDistance(const Point &p1, const Point &p2)
-{
-    return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) + pow(p1.z - p2.z, 2));
-}
 
 // Elbow Method
 float findElbowPoint(float kDistances[], int numPoints)
@@ -877,7 +678,6 @@ float findElbowPoint(float kDistances[], int numPoints)
             elbowIndices.push_back(i);
         }
     }
-
     // Calculate the average of all elbow points
     float sumElbowDistances = 0;
     for (int index : elbowIndices)
@@ -965,6 +765,175 @@ float findKneePoint(float kDistances[], int numPoints)
     return (maxChangeIndex != -1) ? kDistances[maxChangeIndex] : -1;
 }
 
+int estimateNoisePoints(float prelimEpsilon)
+{
+    int noisePointCount = 0;
+    for (int i = 0; i < numPoints; ++i)
+    {
+        int neighborCount = 0;
+        for (int j = 0; j < numPoints; ++j)
+        {
+            if (i != j && calculateDistance(points[i], points[j]) < prelimEpsilon)
+            {
+                neighborCount++;
+            }
+        }
+        if (neighborCount < minPoints)
+        {
+            noisePointCount++;
+        }
+    }
+    return noisePointCount;
+}
+
+void adjustEpsilonBasedOnFeedback(int const Elbow_value, int const Knee_value)
+{
+
+    int noisePoints = estimateNoisePoints(std::max(Elbow_value, Knee_value));
+    Serial.print("\n noisePoints: ");
+    Serial.println(noisePoints);
+    float noiseRatio = static_cast<float>(noisePoints) / MAX_POINTS;
+    Serial.print("\n estimated Noise Ratio: ");
+    Serial.println(noiseRatio);
+
+    if (noiseRatio >= 0.2) // High noise
+    {
+        epsilon = std::min(Elbow_value, Knee_value); // Reduce epsilon
+    }
+    else if (noiseRatio < 0.2)
+    {
+        epsilon = std::max(Elbow_value, Knee_value);
+    }
+}
+
+/*
+---------------------------------------------------------------
+------------- K-Distance to define epsilon od DBSCAN ----------
+---------------------------------------------------------------
+*/
+void smoothMovingAverage(float kDistances[], int numPoints)
+{
+    int windowSize = 10;
+    std::vector<float>
+        smoothed(numPoints, 0);
+    for (int i = 0; i < numPoints; ++i)
+    {
+        float sum = 0;
+        int count = 0;
+        for (int j = std::max(0, i - windowSize / 2); j <= std::min(i + windowSize / 2, numPoints - 1); ++j)
+        {
+            sum += kDistances[j];
+            count++;
+        }
+        smoothed[i] = sum / count;
+    }
+    std::copy(smoothed.begin(), smoothed.end(), kDistances);
+}
+
+void smoothGaussian(float kDistances[], int numPoints)
+{
+    int windowSize = 3;
+    // Check for valid window size
+    if (windowSize <= 0 || windowSize > numPoints)
+        return;
+
+    std::vector<float> smoothed(numPoints, 0);
+    std::vector<float> kernel(windowSize, 0);
+
+    // Compute the standard deviation, sigma
+    float sigma = windowSize / 6.0; // A common choice is to set sigma as windowSize / 6
+    float sumKernel = 0;
+
+    // Generate Gaussian kernel
+    for (int i = 0; i < windowSize; ++i)
+    {
+        float x = i - windowSize / 2;
+        kernel[i] = exp(-0.5 * pow(x / sigma, 2));
+        sumKernel += kernel[i];
+    }
+
+    // Normalize the kernel
+    for (auto &k : kernel)
+        k /= sumKernel;
+
+    // Apply Gaussian smoothing
+    for (int i = 0; i < numPoints; ++i)
+    {
+        float weightedSum = 0;
+        for (int j = 0; j < windowSize; ++j)
+        {
+            int index = i + j - windowSize / 2;
+            if (index >= 0 && index < numPoints)
+            {
+                weightedSum += kDistances[index] * kernel[j];
+            }
+        }
+        smoothed[i] = weightedSum;
+    }
+
+    // Copy the smoothed values back to the original array
+    std::copy(smoothed.begin(), smoothed.end(), kDistances);
+}
+
+float calculatePointDistance(const Point &p1, const Point &p2)
+{
+    return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) + pow(p1.z - p2.z, 2));
+}
+
+// Function to calculate the k-distance for each point
+void calculateKDistance_set_Epsilon(Point points[], int numPoints)
+{
+    float kDistances[MAX_POINTS];
+
+    for (int i = 0; i < numPoints; ++i)
+    {
+        std::vector<KDistance> distances;
+        for (int j = 0; j < numPoints; ++j)
+        {
+            if (i != j)
+            {
+                float dist = calculatePointDistance(points[i], points[j]);
+                distances.push_back({dist, j});
+            }
+        }
+        std::sort(distances.begin(), distances.end(), [](const KDistance &a, const KDistance &b)
+                  { return a.distance < b.distance; });
+        if (distances.size() >= K)
+        {
+            kDistances[i] = distances[K - 1].distance;
+        }
+        else
+        {
+            kDistances[i] = -1; // Indicate insufficient neighbors
+        }
+    }
+
+    // smoothMovingAverage(kDistances, numPoints);
+    // smoothGaussian(kDistances, numPoints);
+    int Elbow_value = findElbowPoint(kDistances, numPoints);
+    int Knee_value = findKneePoint(kDistances, numPoints);
+    // epsilon = coeff_elbow * Elbow_value + coeff_Knee * Knee_value;
+    Serial.print("Elbow_value= ");
+    Serial.print(Elbow_value);
+    Serial.print(" ,Knee_value= ");
+    Serial.print(Knee_value);
+    adjustEpsilonBasedOnFeedback(Elbow_value, Knee_value);
+}
+
+void print_kDistance(float kDistances[], int numPoints)
+{
+    for (int i = 0; i < numPoints; ++i)
+    {
+        if (kDistances[i] != -1)
+        {
+            Serial.print("Point ");
+            Serial.print(i);
+            Serial.print(" k-distance: ");
+            Serial.println(kDistances[i]);
+        }
+    }
+}
+
 /*
 ----------------------------------------------------------------
 ---------------------- Info of clusters ------------------------
@@ -1039,9 +1008,6 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
             std::vector<int> neighbors;
             getNeighbors(i, neighbors);
             int numNeighbors_core = neighbors.size();
-            // int neighbors[numberOfClusters];
-            // int numNeighbors = 0;
-            // getNeighbors(i, neighbors, numNeighbors);
             if (numNeighbors_core >= minPoints)
             {
                 int currentDistance = points[i].distance;
@@ -1137,95 +1103,6 @@ void printClustersInfo(const std::vector<ClusterInfo> &clusters, int sweep)
 ---------------------- Read data from sensor --------------------
 -----------------------------------------------------------------
 */
-int get_distance()
-{
-    int samples[numSamples];
-    int validSamples = 0;
-    long sumDistance = 0;
-    int unvalid_counter = 0;
-    for (int i = 0; i < numSamples; i++)
-    {
-        samples[i] = sensor_measurement();
-        if (samples[i] < 5000 && samples[i] != -1)
-        { // Assuming 8190 is the max value indicating an invalid reading
-            sumDistance += samples[i];
-            validSamples++;
-        }
-        else
-        {
-            unvalid_counter++;
-        }
-        delay(10);
-    }
-
-    if (unvalid_counter != numSamples)
-    {
-        int medianDistance = calculateMedianDistance(samples, numSamples);
-        return medianDistance;
-    }
-    else
-    {
-        return -1;
-    }
-}
-
-int sensor_measurement()
-{
-    VL53L4CX_MultiRangingData_t MultiRangingData;
-    VL53L4CX_MultiRangingData_t *pMultiRangingData = &MultiRangingData;
-    uint8_t NewDataReady = 0;
-    int no_of_object_found = 0, j;
-    int status;
-    int chosenDistance = INT_MAX;
-    int chosenStatus = -1;
-    int measurement = 0;
-    while (no_of_object_found == 0)
-    {
-        do
-        {
-            status = sensor_vl53l4cx_sat.VL53L4CX_GetMeasurementDataReady(&NewDataReady);
-        } while (!NewDataReady);
-
-        if ((!status) && (NewDataReady != 0))
-        {
-            status = sensor_vl53l4cx_sat.VL53L4CX_GetMultiRangingData(pMultiRangingData);
-            no_of_object_found = pMultiRangingData->NumberOfObjectsFound;
-            // Serial.print("NumberOfObjectsFound: ");
-            // Serial.println(no_of_object_found);
-            for (j = 0; j < no_of_object_found; j++)
-            {
-                int currentDistance = pMultiRangingData->RangeData[j].RangeMilliMeter;
-                int currentStatus = pMultiRangingData->RangeData[j].RangeStatus;
-                // Serial.print("measurement: ");
-                // Serial.println(currentDistance);
-                // if ((currentStatus == 0 || currentStatus == 2 || currentStatus == 3 || currentStatus == 4 || currentStatus == 6 || currentStatus == 7) && currentDistance >= 0 && currentDistance < chosenDistance)
-                if (currentDistance > 0 && currentDistance < chosenDistance)
-
-                {
-                    chosenDistance = currentDistance;
-                    chosenStatus = currentStatus;
-                }
-            }
-
-            if (chosenStatus != -1)
-            {
-
-                measurement = chosenDistance;
-            }
-            else
-            {
-                measurement = -1;
-            }
-
-            if (status == 0)
-            {
-                status = sensor_vl53l4cx_sat.VL53L4CX_ClearInterruptAndStartMeasurement();
-            }
-        }
-    }
-    return measurement;
-}
-
 // Function to calculate the median of an array of integers
 int calculateMedianDistance(int samples[], int numSamples)
 {
@@ -1258,6 +1135,90 @@ void sortArray(int arr[], int numElements)
                 arr[j + 1] = temp;
             }
         }
+    }
+}
+
+int sensor_measurement()
+{
+    VL53L4CX_MultiRangingData_t MultiRangingData;
+    VL53L4CX_MultiRangingData_t *pMultiRangingData = &MultiRangingData;
+    uint8_t NewDataReady = 0;
+    int no_of_object_found = 0, j;
+    int status;
+    int chosenDistance = INT_MAX;
+    int chosenStatus = -1;
+    int measurement = 0;
+    while (no_of_object_found == 0)
+    {
+        do
+        {
+            status = sensor_vl53l4cx_sat.VL53L4CX_GetMeasurementDataReady(&NewDataReady);
+        } while (!NewDataReady);
+
+        if ((!status) && (NewDataReady != 0))
+        {
+            status = sensor_vl53l4cx_sat.VL53L4CX_GetMultiRangingData(pMultiRangingData);
+            no_of_object_found = pMultiRangingData->NumberOfObjectsFound;
+            for (j = 0; j < no_of_object_found; j++)
+            {
+                int currentDistance = pMultiRangingData->RangeData[j].RangeMilliMeter;
+                int currentStatus = pMultiRangingData->RangeData[j].RangeStatus;
+                // if ((currentStatus == 0 || currentStatus == 2 || currentStatus == 3 || currentStatus == 4 || currentStatus == 6 || currentStatus == 7) && currentDistance >= 0 && currentDistance < chosenDistance)
+                if (currentDistance > 0 && currentDistance < chosenDistance)
+
+                {
+                    chosenDistance = currentDistance;
+                    chosenStatus = currentStatus;
+                }
+            }
+
+            if (chosenStatus != -1)
+            {
+
+                measurement = chosenDistance;
+            }
+            else
+            {
+                measurement = -1;
+            }
+
+            if (status == 0)
+            {
+                status = sensor_vl53l4cx_sat.VL53L4CX_ClearInterruptAndStartMeasurement();
+            }
+        }
+    }
+    return measurement;
+}
+int get_distance()
+{
+    int samples[numSamples];
+    int validSamples = 0;
+    long sumDistance = 0;
+    int unvalid_counter = 0;
+    for (int i = 0; i < numSamples; i++)
+    {
+        samples[i] = sensor_measurement();
+        if (samples[i] < Sensor_range && samples[i] != -1)
+        {
+            sumDistance += samples[i];
+            validSamples++;
+        }
+        else
+        {
+            unvalid_counter++;
+        }
+        delay(10);
+    }
+
+    if (unvalid_counter != numSamples)
+    {
+        int medianDistance = calculateMedianDistance(samples, numSamples);
+        return medianDistance;
+    }
+    else
+    {
+        return -1;
     }
 }
 
