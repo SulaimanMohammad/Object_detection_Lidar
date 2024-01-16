@@ -1,4 +1,3 @@
-
 #include <Arduino.h>
 #include <Wire.h>
 #include <vl53l4cx_class.h>
@@ -26,11 +25,16 @@
 
 /* ---------- Lidar variables ---------- */
 const int numSamples = 1; // number of samples for one reading
-#define FOV 2             // Field of View of the sensor
-#define pan_active_range 180
-#define tilt_active_range 180
-#define MAX_POINTS (pan_active_range / FOV) + 1 // Adjust based on maximum expected number of points
-#define Sensor_range 6000                       // it is maximum reading the sensor give here 6m in mm
+#define FOV 10            // Field of View of the sensor
+#define pan_start_range 20
+#define pan_end_range 80
+#define tilt_start_range 40
+#define tilt_end_range 120
+
+#define pan_active_range (pan_end_range - pan_start_range)
+#define tilt_active_range (tilt_end_range - tilt_start_range)
+#define MAX_POINTS (((pan_active_range / FOV) + 1) * ((tilt_active_range / FOV) + 1))
+#define Sensor_range 6000 // it is maximum reading the sensor give here 6m in mm
 #define Limit_distance Sensor_range + (Sensor_range * 0.20)
 /* ---------- Servo variables ---------- */
 int pan_controle = 2;  // Pin on the bord for control signal
@@ -94,18 +98,13 @@ struct KDistance
 /*--- Point represent connection between distance-angle in 2D plan --*/
 struct Point
 {
-    float x, y, z, distance;
+    float x, y, z;
+    int distance = Limit_distance;
     float pan_angle, tilt_angle;
     bool visited = false;
     int clusterId = UNCLASSIFIED;
 };
 Point points[MAX_POINTS];
-// int savedDistances[(pan_active_range / FOV) + 1]; // Array to store distances at each FOV step
-// // +1 because 18/18=10 (0 to 162) and we need one element for the read of 180
-int pan_steps = pan_active_range / FOV + 1;
-int tilt_steps = tilt_active_range / FOV + 1;
-std::vector<std::vector<std::vector<int>>> savedDistances;
-std::vector<std::vector<std::vector<bool>>> isFirstReading;
 
 /* ----------  Initialization ---------- */
 VL53L4CX sensor_vl53l4cx_sat(&DEV_I2C, 2);
@@ -158,44 +157,18 @@ void setup()
     tilt_servo.attach(tilt_controle);
     pan_servo.write(0);
     tilt_servo.write(0);
-    Serial.println("Starting setup...");
-
-    Serial.print("Computed pan_steps: ");
-    Serial.println(pan_steps);
-    Serial.print("Computed tilt_steps: ");
-    Serial.println(tilt_steps);
-
-    // Check if the sizes are as expected
-    // static_assert(pan_active_range / FOV + 1 > 0, "pan_steps is non-positive");
-    // static_assert(tilt_active_range / FOV + 1 > 0, "tilt_steps is non-positive");
-
-    // Initialize vectors
-    Serial.println("Initializing vectors...");
-    savedDistances = std::vector<std::vector<std::vector<int>>>(
-        pan_steps,
-        std::vector<std::vector<int>>(
-            tilt_steps,
-            std::vector<int>(1, Limit_distance)));
-
-    isFirstReading = std::vector<std::vector<std::vector<bool>>>(
-        pan_steps,
-        std::vector<std::vector<bool>>(
-            tilt_steps,
-            std::vector<bool>(1, true)));
-
-    Serial.println("Vectors initialized successfully.");
 }
 
 void loop()
 {
     Serial.println(" Sweep 0-180");
-    move_collect_data(0, 180);
+    move_collect_data(pan_start_range, pan_end_range);
     std::vector<ClusterInfo> clustersSweep1;
     detect_objects_clustering(clustersSweep1);
     printClustersInfo(clustersSweep1, 1); // After first sweep
 
     Serial.println(" Sweep 180-0");
-    move_collect_data(180, 0);
+    move_collect_data(pan_end_range, pan_start_range);
     reorderPointsForConsistentProcessing(); // Reorder points for consistent processing
 
     std::vector<ClusterInfo> clustersSweep2;
@@ -224,7 +197,11 @@ void loop()
  */
 void move_collect_data(int start_point, int end_point)
 {
+    numPoints = 0;
     int step = (start_point < end_point) ? FOV : -FOV; // Determine the direction based on start and end values
+    int totalTiltSteps = (abs(tilt_end_range - tilt_start_range) / FOV) + 1;
+    int totalPanSteps = (abs(pan_end_range - pan_start_range) / FOV) + 1;
+    int totalPoints = totalPanSteps * totalTiltSteps;
 
     // Move from start to end, updating the average and collecting valid data
     for (int pan_servoPosition = start_point; (step > 0) ? (pan_servoPosition <= end_point) : (pan_servoPosition >= end_point); pan_servoPosition += step)
@@ -232,54 +209,68 @@ void move_collect_data(int start_point, int end_point)
         pan_servo.write(pan_servoPosition);
         delay(50); // Wait for stabilization
 
-        for (int tilt_servoPosition = 0; tilt_servoPosition <= tilt_active_range; tilt_servoPosition += FOV)
+        bool isEvenPanStep = (pan_servoPosition / FOV) % 2 == 0;
+        // int tiltStart = isEvenPanStep ? tilt_start_range : tilt_end_range;
+        // int tiltEnd = isEvenPanStep ? tilt_end_range : tilt_start_range;
+
+        int tiltStart, tiltEnd;
+
+        tiltStart = isEvenPanStep ? tilt_start_range : tilt_end_range;
+        tiltEnd = isEvenPanStep ? tilt_end_range : tilt_start_range;
+
+        int tiltStep = (tiltStart < tiltEnd) ? FOV : -FOV;
+
+        for (int tilt_servoPosition = tiltStart; isEvenPanStep ? (tilt_servoPosition <= tiltEnd) : (tilt_servoPosition >= tiltEnd); tilt_servoPosition += tiltStep)
         {
+            int panIndex = (abs(pan_servoPosition - pan_start_range) / FOV);
+            int tiltIndex = (abs(tilt_servoPosition - tilt_start_range) / FOV);
+            numPoints = panIndex * totalTiltSteps + tiltIndex;
+
             tilt_servo.write(tilt_servoPosition);
             delay(50); // Wait for stabilization
-
             int distance = get_distance();
+
             if (distance > 0)
             {
-                int pan_index = abs(pan_servoPosition) / FOV; // Adjust index for pan angle
-                int tilt_index = tilt_servoPosition / FOV;    // Index for tilt angle
-
-                if (isFirstReading[pan_index][tilt_index][0] || savedDistances[pan_index][tilt_index][0] == Limit_distance)
+                if (points[numPoints].distance == Limit_distance)
                 {
                     // If it's the first reading, update with the new distance
-                    savedDistances[pan_index][tilt_index][0] = distance;
+                    points[numPoints] = sphericalToCartesian(pan_servoPosition, tilt_servoPosition, distance);
                 }
                 else
                 {
                     // Otherwise, calculate the new average
-                    savedDistances[pan_index][tilt_index][0] = (savedDistances[pan_index][tilt_index][0] + distance) / 2.0;
+                    points[numPoints] = sphericalToCartesian(pan_servoPosition, tilt_servoPosition, ((points[numPoints].distance + distance) / 2.0));
                 }
-                isFirstReading[pan_index][tilt_index][0] = false;
-
-                // Convert valid polar coordinates to Cartesian and store in the array
-                // Note: Modify sphericalToCartesian function to accept distance as a parameter
-                points[numPoints] = sphericalToCartesian(pan_servoPosition, tilt_servoPosition, savedDistances[pan_index][tilt_index][0]);
-                // Print pan angle, tilt angle, distance, and 3D point coordinates
-                Serial.print("Pan Angle: ");
-                Serial.print(pan_servoPosition);
-                Serial.print(", Tilt Angle: ");
-                Serial.print(tilt_servoPosition);
-                Serial.print(", Distance: ");
-                Serial.print(distance);
-                Serial.print(", Point: (");
-                Serial.print(points[numPoints].x);
-                Serial.print(", ");
-                Serial.print(points[numPoints].y);
-                Serial.print(", ");
-                Serial.print(points[numPoints].z);
-                Serial.println(")");
-                numPoints++; // Increment the number of points
             }
+
+            Serial.print("point index : ");
+            Serial.print(numPoints);
+            Serial.print(", Pan Angle: ");
+            Serial.print(pan_servoPosition);
+            Serial.print(", Tilt Angle: ");
+            Serial.print(tilt_servoPosition);
+            Serial.print(", read Distance: ");
+            Serial.print(distance);
+            Serial.print(", Point: (");
+            Serial.print(points[numPoints].x);
+            Serial.print(", ");
+            Serial.print(points[numPoints].y);
+            Serial.print(", ");
+            Serial.print(points[numPoints].z);
+            Serial.print(")");
+            Serial.print(", Distance: ");
+            Serial.println(points[numPoints].distance);
+
+            // numPoints++; // Increment the number of points
         }
+
         // Additional check to ensure the loop includes the end point
         if (pan_servoPosition == end_point)
         {
             break;
         }
+        // delay(1000);
     }
 }
 
@@ -332,15 +323,6 @@ void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
 
 void resetData()
 {
-    // Loop through the pan and tilt steps for the 3D vectors
-    for (int pan = 0; pan < (pan_active_range / FOV) + 1; pan++)
-    {
-        for (int tilt = 0; tilt < (tilt_active_range / FOV) + 1; tilt++)
-        {
-            savedDistances[pan][tilt][0] = 0;
-            isFirstReading[pan][tilt][0] = true;
-        }
-    }
 
     // Reset the points array
     for (int i = 0; i < MAX_POINTS; i++)
@@ -383,12 +365,16 @@ void reorderPointsForConsistentProcessing()
 Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance)
 {
     Point p;
+    p.distance = distance;
     p.pan_angle = pan_angle;
     p.tilt_angle = tilt_angle;
-    float theta = static_cast<float>(pan_angle) * PI / 180.0f; // Pan angle, horizontal rotation
-    float phi = static_cast<float>(tilt_angle) * PI / 180.0f;  // Tilt angle, vertical rotation
-    p.x = distance * sin(phi) * cos(theta);
-    p.y = distance * sin(phi) * sin(theta);
+    // Convert angles from degrees to radians
+    float theta = static_cast<float>(pan_angle) * PI / 180.0f; // Pan angle in radians
+    float phi = static_cast<float>(tilt_angle) * PI / 180.0f;  // Tilt angle in radians
+
+    // Convert to Cartesian coordinates
+    p.x = distance * cos(theta) * sin(phi);
+    p.y = distance * sin(theta) * sin(phi);
     p.z = distance * cos(phi);
 
     return p;
@@ -912,22 +898,15 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
             clusterData[clusterId].sumX += points[i].x;
             clusterData[clusterId].sumY += points[i].y;
             clusterData[clusterId].count++;
-            // Calculate indices for savedDistances
-            int pan_index = (points[i].pan_angle + 180) / FOV;
-            int tilt_index = points[i].tilt_angle / FOV;
+            int pointDistance = points[i].distance;
 
-            // Check if indices are within the range
-            if (pan_index >= 0 && pan_index < pan_steps && tilt_index >= 0 && tilt_index < tilt_steps)
+            // Check for minimum distance
+            if (pointDistance < clusterData[clusterId].minDistance && pointDistance != 0)
             {
-                int distance = savedDistances[pan_index][tilt_index][0];
-
-                // Check for minimum distance
-                if (distance < clusterData[clusterId].minDistance && distance != 0)
-                {
-                    clusterData[clusterId].minDistance = distance;
-                    clusterData[clusterId].minDistancePointIndex = i;
-                }
+                clusterData[clusterId].minDistance = pointDistance;
+                clusterData[clusterId].minDistancePointIndex = i;
             }
+
             // Check for core point (based on number of neighbors)
             int neighbors[MAX_POINTS];
             int numNeighbors = 0;
@@ -943,15 +922,8 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
                     int corePointIndex = clusterData[clusterId].corePointIndex;
                     if (corePointIndex >= 0 && corePointIndex < numPoints)
                     {
-                        // Calculate indices for savedDistances
-                        int pan_index = (points[corePointIndex].pan_angle + 180) / FOV;
-                        int tilt_index = points[corePointIndex].tilt_angle / FOV;
 
-                        // Check if indices are within the range
-                        if (pan_index >= 0 && pan_index < pan_steps && tilt_index >= 0 && tilt_index < tilt_steps)
-                        {
-                            clusterData[clusterId].corePointDistance = savedDistances[pan_index][tilt_index][0];
-                        }
+                        clusterData[clusterId].corePointDistance = points[corePointIndex].distance; // Access the distance using flatIndex
                     }
                 }
             }
