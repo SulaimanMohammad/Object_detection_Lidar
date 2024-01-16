@@ -207,18 +207,18 @@ void loop()
     reorderPointsForConsistentProcessing(); // Reorder points for consistent processing
 
     std::vector<ClusterInfo> clustersSweep2;
-    detect_objects_clustering(clustersSweep2);
-    printClustersInfo(clustersSweep2, 2);
+    // detect_objects_clustering(clustersSweep2);
+    // printClustersInfo(clustersSweep2, 2);
 
-    std::vector<ClusterInfo> mergedClusters = mergeClustersBasedOnTopsis(clustersSweep1, clustersSweep2);
-    Serial.println("            Merged Cluster Info: ");
-    for (const auto &cluster : mergedClusters)
-    {
-        Serial.print("CorePointDistance: ");
-        Serial.print(cluster.corePointDistance);
-        Serial.print(" \tMin Distance: ");
-        Serial.println(cluster.minDistance);
-    }
+    // std::vector<ClusterInfo> mergedClusters = mergeClustersBasedOnTopsis(clustersSweep1, clustersSweep2);
+    // Serial.println("            Merged Cluster Info: ");
+    // for (const auto &cluster : mergedClusters)
+    // {
+    //     Serial.print("CorePointDistance: ");
+    //     Serial.print(cluster.corePointDistance);
+    //     Serial.print(" \tMin Distance: ");
+    //     Serial.println(cluster.minDistance);
+    // }
     resetData();
     delay(500); // Wait for stabilization
     Serial.println("-------------------------------------------------");
@@ -247,6 +247,8 @@ void move_collect_data(int start_point, int end_point)
         delay(50); // Wait for stabilization
 
         bool isEvenPanStep = (pan_servoPosition / object_FOV) % 2 == 0;
+        // int tiltStart = isEvenPanStep ? tilt_start_range : tilt_end_range;
+        // int tiltEnd = isEvenPanStep ? tilt_end_range : tilt_start_range;
 
         int tiltStart, tiltEnd;
 
