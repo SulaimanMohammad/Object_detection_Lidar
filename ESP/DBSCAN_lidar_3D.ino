@@ -18,6 +18,9 @@
 #define DEV_I2C Wire
 #define SerialPort Serial
 
+#define argent_warning_distance 40
+bool warning_distance = false;
+int points_in_warning_distance = 0;
 /* ---------- Lidar variables ---------- */
 const int numSamples = 1; // number of samples for one reading
 #define FOV 3             // Field of View of the sensor
@@ -30,15 +33,16 @@ const int numSamples = 1; // number of samples for one reading
 #define pan_active_range (pan_end_range - pan_start_range)
 #define tilt_active_range (tilt_end_range - tilt_start_range)
 #define MAX_POINTS (((pan_active_range / object_FOV) + 1) * ((tilt_active_range / object_FOV) + 1))
-#define Sensor_range 6000 // it is maximum reading the sensor give here 6m in mm
-#define Limit_distance Sensor_range + (Sensor_range * 0.20)
+#define Sensor_max_range 6000 // it is maximum reading the sensor give here 6m in mm
+#define Sensor_min_range 20
+#define Limit_distance Sensor_max_range + (Sensor_max_range * 0.20)
 /* ---------- Servo variables ---------- */
 #define pan_controle 2  // Pin on the bord for control signal
 #define tilt_controle 4 // Pin on the bord for control signal
 
 /* ---------- DBSCAN parameters ---------- */
 #define minPoints 3               // Number of close point to form cluster
-#define angleWeight 0.5           // How imortant is the connectivity of the angle with distance
+#define angleWeight 0.1           // How imortant is the connectivity of the angle with distance
 #define shift_margin_to_merge 300 // Max diffeence in distance between tow clusters core to merge them
 float epsilon;                    // Dynamically defined by K-distance methode
 int numPoints = MAX_POINTS;
@@ -98,6 +102,7 @@ struct Point
     int clusterId = UNCLASSIFIED;
 };
 Point points[MAX_POINTS];
+std::map<int, std::vector<Point>> clusterMap;
 
 /* ----------  Initialization ---------- */
 VL53L4CX sensor_vl53l4cx_sat(&DEV_I2C, 2);
@@ -173,87 +178,123 @@ void loop()
 
 /*
 ------------------------------------------------------------
---------------------- Main functions -----------------------
+-------- Move Servos & collect_data functions --------------
 ------------------------------------------------------------
 */
-void move_collect_data(int start_point, int end_point)
+void move_servo_to_position(Servo &servo, int position)
 {
-    int index = 0;
-    int step = (start_point < end_point) ? object_FOV : -object_FOV; // Determine the direction based on start and end values
-    bool reverse = (start_point < end_point) ? false : true;         // Determine the direction based on start and end values
+    servo.write(position);
+    delay(100); // Wait for stabilization
+}
 
-    int totalTiltSteps = (abs(tilt_end_range - tilt_start_range) / object_FOV) + 1;
-    int totalPanSteps = (abs(pan_end_range - pan_start_range) / object_FOV) + 1;
-    int totalPoints = totalPanSteps * totalTiltSteps;
-    // Move from start to end, updating the average and collecting valid data
-    for (int pan_servoPosition = start_point; (step > 0) ? (pan_servoPosition <= end_point) : (pan_servoPosition >= end_point); pan_servoPosition += step)
+Point update_point(int pan_servoPosition, int tilt_servoPosition, int distance, int index)
+{
+    if (distance > Sensor_min_range)
     {
-        pan_servo.write(pan_servoPosition);
-        delay(50); // Wait for stabilization
-
-        bool isEvenPanStep = (pan_servoPosition / object_FOV) % 2 == 0;
-
-        int tiltStart, tiltEnd;
-
-        if (reverse && pan_servoPosition == pan_end_range)
+        if (points[index].distance == Limit_distance)
         {
-            tiltStart = isEvenPanStep ? tilt_end_range : tilt_start_range; // Start from the highest tilt angle
-            tiltEnd = isEvenPanStep ? tilt_start_range : tilt_end_range;   // Move to the lowest tilt angle
-            isEvenPanStep = false;
+            return sphericalToCartesian(pan_servoPosition, tilt_servoPosition, distance);
         }
         else
         {
-            tiltStart = isEvenPanStep ? tilt_start_range : tilt_end_range;
-            tiltEnd = isEvenPanStep ? tilt_end_range : tilt_start_range;
+            return sphericalToCartesian(pan_servoPosition, tilt_servoPosition, (points[index].distance + distance) / 2.0);
         }
+    }
+    return sphericalToCartesian(pan_servoPosition, tilt_servoPosition, Limit_distance);
+}
 
-        int tiltStep = (tiltStart < tiltEnd) ? object_FOV : -object_FOV;
+int calculate_index(int pan_servoPosition, int tilt_servoPosition)
+{
+    // Determine the pan and tilt steps based on the current angle and the object FOV
+    int panIndex = (abs(pan_servoPosition - pan_start_range) / object_FOV);
+    int tiltIndex = (abs(tilt_servoPosition - tilt_start_range) / object_FOV);
+
+    // Calculate the total number of tilt steps to determine how tilt affects the index
+    int totalTiltSteps = (abs(tilt_end_range - tilt_start_range) / object_FOV) + 1;
+
+    // The index is then the combination of pan and tilt steps
+    return panIndex * totalTiltSteps + tiltIndex;
+}
+
+void calculate_tilt_range(int &tiltStart, int &tiltEnd, int &tiltStep, int pan_servoPosition, bool reverse)
+{
+    bool isEvenPanStep = (pan_servoPosition / object_FOV) % 2 == 0;
+
+    if (reverse && pan_servoPosition == pan_end_range)
+    {
+        tiltStart = isEvenPanStep ? tilt_end_range : tilt_start_range; // Start from the highest tilt angle
+        tiltEnd = isEvenPanStep ? tilt_start_range : tilt_end_range;   // Move to the lowest tilt angle
+        isEvenPanStep = false;
+    }
+    else
+    {
+        tiltStart = isEvenPanStep ? tilt_start_range : tilt_end_range;
+        tiltEnd = isEvenPanStep ? tilt_end_range : tilt_start_range;
+    }
+
+    tiltStep = (tiltStart < tiltEnd) ? object_FOV : -object_FOV;
+}
+
+void print_point_data(int index, int pan_servoPosition, int tilt_servoPosition, int distance)
+{
+    Serial.print("point index : ");
+    Serial.print(index);
+    Serial.print(", Pan Angle: ");
+    Serial.print(pan_servoPosition);
+    Serial.print(", Tilt Angle: ");
+    Serial.print(tilt_servoPosition);
+    Serial.print(", read Distance: ");
+    Serial.print(distance);
+    Serial.print(", Point: (");
+    Serial.print(points[index].x);
+    Serial.print(", ");
+    Serial.print(points[index].y);
+    Serial.print(", ");
+    Serial.print(points[index].z);
+    Serial.print(")");
+    Serial.print(", Distance 3D: ");
+    Serial.print(calculateDistance(points[index], points[index - 1]));
+    Serial.print(", Distance 2D: ");
+    Serial.println(points[index].distance);
+}
+void move_collect_data(int start_point, int end_point)
+{
+    int index = 0;
+    int step = (start_point < end_point) ? object_FOV : -object_FOV;
+    bool reverse = (start_point < end_point) ? false : true; // Determine the direction based on start and end values
+    int tiltStart, tiltEnd, tiltStep;
+    for (int pan_servoPosition = start_point; (step > 0) ? (pan_servoPosition <= end_point) : (pan_servoPosition >= end_point); pan_servoPosition += step)
+    {
+        bool isEvenPanStep = (pan_servoPosition / object_FOV) % 2 == 0;
+
+        move_servo_to_position(pan_servo, pan_servoPosition);
+        calculate_tilt_range(tiltStart, tiltEnd, tiltStep, pan_servoPosition, reverse);
+
         for (int tilt_servoPosition = tiltStart; isEvenPanStep ? (tilt_servoPosition <= tiltEnd) : (tilt_servoPosition >= tiltEnd); tilt_servoPosition += tiltStep)
         {
-            int panIndex = (abs(pan_servoPosition - pan_start_range) / object_FOV);
-            int tiltIndex = (abs(tilt_servoPosition - tilt_start_range) / object_FOV);
-            index = panIndex * totalTiltSteps + tiltIndex;
-
-            tilt_servo.write(tilt_servoPosition);
-            delay(100); // Wait for stabilization
+            move_servo_to_position(tilt_servo, tilt_servoPosition);
+            index = calculate_index(pan_servoPosition, tilt_servoPosition);
             int distance = get_distance();
+            points[index] = update_point(pan_servoPosition, tilt_servoPosition, distance, index);
+            print_point_data(index, pan_servoPosition, tilt_servoPosition, distance);
 
-            if (distance > 30)
+            if (distance > Sensor_min_range && distance <= argent_warning_distance && warning_distance == false)
             {
-                if (points[index].distance == Limit_distance)
-                {
-                    // If it's the first reading, update with the new distance
-                    points[index] = sphericalToCartesian(pan_servoPosition, tilt_servoPosition, distance);
-                }
-                else
-                {
-                    // Otherwise, calculate the new average
-                    points[index] = sphericalToCartesian(pan_servoPosition, tilt_servoPosition, ((points[index].distance + distance) / 2.0));
-                }
+                Serial.println("     EMERGENCY       ");
+                warning_distance = true;
+                move_collect_data(pan_servoPosition - step, pan_servoPosition + step);
+                warning_distance = false;
+                Serial.print(" number of points in critical zone: ");
+                Serial.println(points_in_warning_distance);
+                points_in_warning_distance = 0;
+                move_collect_data(pan_servoPosition + step, end_point);
+                return;
             }
-
-            Serial.print("point index : ");
-            Serial.print(index);
-            Serial.print(", Pan Angle: ");
-            Serial.print(pan_servoPosition);
-            Serial.print(", Tilt Angle: ");
-            Serial.print(tilt_servoPosition);
-            Serial.print(", read Distance: ");
-            Serial.print(distance);
-            Serial.print(", Point: (");
-            Serial.print(points[index].x);
-            Serial.print(", ");
-            Serial.print(points[index].y);
-            Serial.print(", ");
-            Serial.print(points[index].z);
-            Serial.print(")");
-            Serial.print(", Distance 3D: ");
-            Serial.print(calculateDistance(points[index], points[index - 1]));
-            Serial.print(", Distance 2D: ");
-            Serial.println(points[index].distance);
+            if (warning_distance && distance <= argent_warning_distance)
+            {
+                points_in_warning_distance++;
+            }
         }
-
-        // Additional check to ensure the loop includes the end point
         if (pan_servoPosition == end_point)
         {
             break;
@@ -261,25 +302,45 @@ void move_collect_data(int start_point, int end_point)
     }
 }
 
-void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
+/*
+------------------------------------------------------------
+------------------Set the point in 2D plan -----------------
+------------------------------------------------------------
+*/
+Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance)
 {
-    // Calculate k-distance for each point, Calculate espilon
-    calculateKDistance_set_Epsilon(points, numPoints);
-    // print_kDistance(kDistances, numPoints);
+    Point p;
+    p.distance = distance;
+    p.pan_angle = pan_angle;
+    p.tilt_angle = tilt_angle;
+    // Convert angles from degrees to radians
+    float theta = static_cast<float>(pan_angle) * PI / 180.0f; // Pan angle in radians
+    float phi = static_cast<float>(tilt_angle) * PI / 180.0f;  // Tilt angle in radians
 
-    Serial.print(",Chosed Epsilon= ");
-    Serial.println(epsilon);
-    if (numPoints > 0)
-    {
-        // Apply DBSCAN for clustering only on valid points
-        DBSCAN();
-    }
-    else
-    {
-        Serial.println("No valid data points collected.");
-    }
+    // Convert to Cartesian coordinates
+    p.x = distance * cos(theta) * sin(phi);
+    p.y = distance * sin(theta) * sin(phi);
+    p.z = distance * cos(phi);
 
-    gather_clusters_info(clusters); // Save the info of clusters in vector
+    return p;
+}
+
+// Function to calculate Euclidean distance between two points with angle consideration
+float calculateDistance(const Point &p1, const Point &p2)
+{
+    // Calculate the Euclidean distance in 3D
+    float spatialDist = sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) + pow(p1.z - p2.z, 2));
+
+    // Calculate angular difference
+    float panDiff = abs(p1.pan_angle - p2.pan_angle);
+    float tiltDiff = abs(p1.tilt_angle - p2.tilt_angle);
+
+    // Scale the angular differences angleWeight is a predefined constant
+    float scaledPanDiff = panDiff * angleWeight;
+    float scaledTiltDiff = tiltDiff * angleWeight;
+
+    // Combine the distances
+    return spatialDist + scaledPanDiff + scaledTiltDiff;
 }
 
 void resetData()
@@ -317,46 +378,45 @@ void reorderPointsForConsistentProcessing()
         j--;
     }
 }
-/*
-------------------------------------------------------------
-------------------Set the point in 2D plan -----------------
-------------------------------------------------------------
-*/
-Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance)
-{
-    Point p;
-    p.distance = distance;
-    p.pan_angle = pan_angle;
-    p.tilt_angle = tilt_angle;
-    // Convert angles from degrees to radians
-    float theta = static_cast<float>(pan_angle) * PI / 180.0f; // Pan angle in radians
-    float phi = static_cast<float>(tilt_angle) * PI / 180.0f;  // Tilt angle in radians
-
-    // Convert to Cartesian coordinates
-    p.x = distance * cos(theta) * sin(phi);
-    p.y = distance * sin(theta) * sin(phi);
-    p.z = distance * cos(phi);
-
-    return p;
-}
-
-// Function to calculate Euclidean distance between two points with angle consideration
-float calculateDistance(const Point &p1, const Point &p2)
-{
-    // Calculate the Euclidean distance in 3D
-    float spatialDist = sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) + pow(p1.z - p2.z, 2));
-    // Calculate angular difference
-    float panDiff = abs(p1.pan_angle - p2.pan_angle);
-    float tiltDiff = abs(p1.tilt_angle - p2.tilt_angle);
-    // Combine the distances (you might need to scale these appropriately)
-    return spatialDist; //+ panDiff + tiltDiff;
-}
 
 /*
 -------------------------------------------------------------
 --------------------------- DBSCAN --------------------------
 -------------------------------------------------------------
 */
+void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
+{
+    // Calculate k-distance for each point, Calculate espilon
+    calculateKDistance_set_Epsilon(points, numPoints);
+    // print_kDistance(kDistances, numPoints);
+
+    Serial.print(",Chosed Epsilon= ");
+    Serial.println(epsilon);
+    if (numPoints > 0)
+    {
+        // Apply DBSCAN for clustering only on valid points
+        DBSCAN();
+    }
+    else
+    {
+        Serial.println("No valid data points collected.");
+    }
+
+    // Clear previous cluster data
+    clusterMap.clear();
+
+    // Populate cluster map with points
+    for (int i = 0; i < numPoints; ++i)
+    {
+        int clusterId = points[i].clusterId;
+        if (clusterId > 0)
+        { // Assuming clusterId <= 0 are noise or unclassified
+            clusterMap[clusterId].push_back(points[i]);
+        }
+    }
+
+    gather_clusters_info(clusters); // Save the info of clusters in vector
+}
 
 void getNeighbors(int pointIndex, std::vector<int> &neighbors)
 {
@@ -401,6 +461,10 @@ void DBSCAN()
     int clusterId = 0;
     for (int i = 0; i < numPoints; ++i)
     {
+        if (points[i].distance == 0 || points[i].distance == Limit_distance)
+        {
+            continue;
+        }
         if (points[i].clusterId == UNCLASSIFIED)
         {
             std::vector<int> neighbors;
@@ -1072,28 +1136,31 @@ void printClustersInfo(const std::vector<ClusterInfo> &clusters, int sweep)
     }
     // New code to print all points in the cluster
     Serial.println("Points in this cluster:");
-    for (int j = 0; j < numberOfClusters; j++)
+    for (const auto &pair : clusterMap)
     {
-        for (int i = 0; i < numPoints; ++i)
+        int clusterId = pair.first;
+        const auto &points = pair.second;
+
+        Serial.print("Cluster ID: ");
+        Serial.println(clusterId);
+
+        for (const auto &point : points)
         {
-            if (points[i].clusterId == j)
-            {
-                Serial.print("cluster indes : ");
-                Serial.print(points[i].clusterId);
-                Serial.print(", Coordinates: (");
-                Serial.print(points[i].x);
-                Serial.print(", ");
-                Serial.print(points[i].y);
-                Serial.print(", ");
-                Serial.print(points[i].z);
-                Serial.print(")");
-                Serial.print(", Distance: ");
-                Serial.print(points[i].distance);
-                Serial.print(", pan angle: ");
-                Serial.print(points[i].pan_angle);
-                Serial.print(",  tilt angle: ");
-                Serial.println(points[i].tilt_angle);
-            }
+            Serial.print("cluster indes : ");
+            Serial.print(point.clusterId);
+            Serial.print(", Coordinates: (");
+            Serial.print(point.x);
+            Serial.print(", ");
+            Serial.print(point.y);
+            Serial.print(", ");
+            Serial.print(point.z);
+            Serial.print(")");
+            Serial.print(", Distance: ");
+            Serial.print(point.distance);
+            Serial.print(", pan angle: ");
+            Serial.print(point.pan_angle);
+            Serial.print(",  tilt angle: ");
+            Serial.println(point.tilt_angle);
         }
     }
 }
@@ -1199,7 +1266,7 @@ int get_distance()
     for (int i = 0; i < numSamples; i++)
     {
         samples[i] = sensor_measurement();
-        if (samples[i] < Sensor_range && samples[i] != -1)
+        if (samples[i] < Sensor_max_range && samples[i] != -1)
         {
             sumDistance += samples[i];
             validSamples++;
