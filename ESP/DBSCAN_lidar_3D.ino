@@ -37,8 +37,9 @@ const int numSamples = 1; // number of samples for one reading
 #define Sensor_min_range 20
 #define Limit_distance Sensor_max_range + (Sensor_max_range * 0.20)
 /* ---------- Servo variables ---------- */
-#define pan_controle 2  // Pin on the bord for control signal
-#define tilt_controle 4 // Pin on the bord for control signal
+#define pan_controle 2       // Pin on the bord for control signal
+#define tilt_controle 4      // Pin on the bord for control signal
+#define servo_1degree_time 6 // milliseconds
 
 /* ---------- DBSCAN parameters ---------- */
 #define minPoints 3               // Number of close point to form cluster
@@ -122,7 +123,7 @@ Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance);      
 float calculateDistance(const Point &p1, const Point &p2);                           // Calculate the distance between 2 points considering the distance and the angle
 void DBSCAN();
 std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &clustersSweep1, std::vector<ClusterInfo> &clustersSweep2);
-void calculateKDistance_set_Epsilon(Point points[], int numPoints, float kDistances[]);
+void calculateKDistance_set_Epsilon();
 void print_kDistance(float kDistances[], int numPoints);
 void gather_clusters_info(std::vector<ClusterInfo> &clusters);
 void printClustersInfo(const std::vector<ClusterInfo> &clusters, int sweep);
@@ -187,7 +188,7 @@ void loop()
 void move_servo_to_position(Servo &servo, int position)
 {
     servo.write(position);
-    delay(100); // Wait for stabilization
+    delay(servo_1degree_time * object_FOV); // Wait for stabilization
 }
 
 Point update_point(int pan_servoPosition, int tilt_servoPosition, int distance, int index)
@@ -369,11 +370,8 @@ void reorderPointsForConsistentProcessing()
 void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
 {
     // Calculate k-distance for each point, Calculate espilon
-    calculateKDistance_set_Epsilon(points, numPoints);
-    // print_kDistance(kDistances, numPoints);
+    calculateKDistance_set_Epsilon();
 
-    Serial.print(",Chosed Epsilon= ");
-    Serial.println(epsilon);
     if (numPoints > 0)
     {
         // Apply DBSCAN for clustering only on valid points
@@ -716,10 +714,10 @@ std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &cl
 ---------------------- Find epsilon od DBSCAN -----------------
 ---------------------------------------------------------------
 */
-
 // Elbow Method
-float findElbowPoint(float kDistances[], int numPoints)
+float findElbowPoint(const std::vector<float> &kDistances)
 {
+    int numPoints = kDistances.size();
     std::vector<int> elbowIndices; // Store indices of all elbow points
 
     for (int i = 1; i < numPoints - 1; ++i)
@@ -730,6 +728,7 @@ float findElbowPoint(float kDistances[], int numPoints)
             elbowIndices.push_back(i);
         }
     }
+
     // Calculate the average of all elbow points
     float sumElbowDistances = 0;
     for (int index : elbowIndices)
@@ -746,9 +745,9 @@ float findElbowPoint(float kDistances[], int numPoints)
     return averageElbowDistance;
 }
 
-// Knee method ( consider many Elbows)
-float findKneePoint_simple(float kDistances[], int numPoints)
+float findKneePoint_simple(const std::vector<float> &kDistances)
 {
+    int numPoints = kDistances.size();
     std::vector<int> kneeIndices; // Store indices of all knee points
 
     for (int i = 1; i < numPoints - 1; ++i)
@@ -779,45 +778,40 @@ float findKneePoint_simple(float kDistances[], int numPoints)
 }
 
 // this knee finder use Derivative-Based Method , Significant Knee Selection, Outlier Handling
-float findKneePoint(float kDistances[], int numPoints)
+
+float findKneePoint(const std::vector<float> &kDistances)
 {
+    int numPoints = kDistances.size();
     if (numPoints < 3)
     {
         return -1; // Not enough points to determine a knee
     }
 
-    // Handling Outliers: Using percentile-based approach
-    std::vector<float> sortedDistances(kDistances, kDistances + numPoints);
-    std::sort(sortedDistances.begin(), sortedDistances.end());
-    float lowerPercentile = sortedDistances[numPoints * 0.05]; // 5th percentile
-    float upperPercentile = sortedDistances[numPoints * 0.95]; // 95th percentile
+    // Function to calculate the angle between three points
+    auto angle = [](float a, float b, float c) -> float
+    {
+        float angle = atan2(c - b, 1.0f) - atan2(b - a, 1.0f);
+        return fabs(angle);
+    };
 
-    // Finding points with significant change in slope (derivative-based)
-    float maxSlopeChange = 0;
-    int maxChangeIndex = -1;
+    float maxAngle = 0.0;
+    int kneeIndex = -1;
+
+    // Iterate over the points to find the maximum angle
     for (int i = 1; i < numPoints - 1; ++i)
     {
-        if (kDistances[i] < lowerPercentile || kDistances[i] > upperPercentile)
+        float currentAngle = angle(kDistances[i - 1], kDistances[i], kDistances[i + 1]);
+        if (currentAngle > maxAngle)
         {
-            continue; // Skip outliers
-        }
-
-        float diff1 = kDistances[i] - kDistances[i - 1];
-        float diff2 = kDistances[i + 1] - kDistances[i];
-        float slopeChange = std::abs(diff1 - diff2);
-
-        if (diff1 * diff2 < 0 && slopeChange > maxSlopeChange)
-        {
-            maxSlopeChange = slopeChange;
-            maxChangeIndex = i;
+            maxAngle = currentAngle;
+            kneeIndex = i;
         }
     }
 
-    // Return the knee point with the most significant change in slope
-    return (maxChangeIndex != -1) ? kDistances[maxChangeIndex] : -1;
+    return (kneeIndex != -1) ? kDistances[kneeIndex] : -1;
 }
 
-int estimateNoisePoints(float prelimEpsilon)
+int estimateNoisePoints(float thresholdX, float thresholdY, float thresholdZ)
 {
     int noisePointCount = 0;
     for (int i = 0; i < numPoints; ++i)
@@ -825,7 +819,10 @@ int estimateNoisePoints(float prelimEpsilon)
         int neighborCount = 0;
         for (int j = 0; j < numPoints; ++j)
         {
-            if (i != j && calculateDistance(points[i], points[j]) < prelimEpsilon)
+            if (i != j &&
+                abs(points[i].x - points[j].x) <= thresholdX &&
+                abs(points[i].y - points[j].y) <= thresholdY &&
+                abs(points[i].z - points[j].z) <= thresholdZ)
             {
                 neighborCount++;
             }
@@ -838,24 +835,66 @@ int estimateNoisePoints(float prelimEpsilon)
     return noisePointCount;
 }
 
-void adjustEpsilonBasedOnFeedback(int const Elbow_value, int const Knee_value)
+void adjustThresholdsBasedOnFeedback(float elbowValueX, float kneeValueX,
+                                     float elbowValueY, float kneeValueY,
+                                     float elbowValueZ, float kneeValueZ)
 {
+    // Find the combination that produces the minimum noise for each dimension
+    std::vector<float> thresholdCandidatesX = {elbowValueX, kneeValueX};
+    std::vector<float> thresholdCandidatesY = {elbowValueY, kneeValueY};
+    std::vector<float> thresholdCandidatesZ = {elbowValueZ, kneeValueZ};
 
-    int noisePoints = estimateNoisePoints(std::max(Elbow_value, Knee_value));
-    Serial.print("\n noisePoints: ");
-    Serial.println(noisePoints);
-    float noiseRatio = static_cast<float>(noisePoints) / MAX_POINTS;
-    Serial.print("\n estimated Noise Ratio: ");
-    Serial.println(noiseRatio);
+    float minNoiseX = std::numeric_limits<float>::max();
+    float minNoiseY = std::numeric_limits<float>::max();
+    float minNoiseZ = std::numeric_limits<float>::max();
 
-    if (noiseRatio >= 0.2) // High noise
+    // Optimal thresholds
+    float optimalThresholdX = thresholdCandidatesX[0];
+    float optimalThresholdY = thresholdCandidatesY[0];
+    float optimalThresholdZ = thresholdCandidatesZ[0];
+
+    for (float candidateX : thresholdCandidatesX)
     {
-        epsilon = std::min(Elbow_value, Knee_value); // Reduce epsilon
+        for (float candidateY : thresholdCandidatesY)
+        {
+            for (float candidateZ : thresholdCandidatesZ)
+            {
+                int noisePoints = estimateNoisePoints(candidateX, candidateY, candidateZ);
+
+                // Check for X
+                if (candidateX == candidateY && candidateX == candidateZ && noisePoints < minNoiseX)
+                {
+                    minNoiseX = noisePoints;
+                    optimalThresholdX = candidateX;
+                }
+
+                // Check for Y
+                if (candidateY == candidateX && candidateY == candidateZ && noisePoints < minNoiseY)
+                {
+                    minNoiseY = noisePoints;
+                    optimalThresholdY = candidateY;
+                }
+
+                // Check for Z
+                if (candidateZ == candidateX && candidateZ == candidateY && noisePoints < minNoiseZ)
+                {
+                    minNoiseZ = noisePoints;
+                    optimalThresholdZ = candidateZ;
+                }
+            }
+        }
     }
-    else if (noiseRatio < 0.2)
-    {
-        epsilon = std::max(Elbow_value, Knee_value);
-    }
+
+    thresholdX = optimalThresholdX;
+    thresholdY = optimalThresholdY;
+    thresholdZ = optimalThresholdZ;
+
+    Serial.print("Optimal Threshold X: ");
+    Serial.println(thresholdX);
+    Serial.print("Optimal Threshold Y: ");
+    Serial.println(thresholdY);
+    Serial.print("Optimal Threshold Z: ");
+    Serial.println(thresholdZ);
 }
 
 /*
@@ -863,113 +902,68 @@ void adjustEpsilonBasedOnFeedback(int const Elbow_value, int const Knee_value)
 ------------- K-Distance to define epsilon od DBSCAN ----------
 ---------------------------------------------------------------
 */
-void smoothMovingAverage(float kDistances[], int numPoints)
-{
-    int windowSize = 10;
-    std::vector<float>
-        smoothed(numPoints, 0);
-    for (int i = 0; i < numPoints; ++i)
-    {
-        float sum = 0;
-        int count = 0;
-        for (int j = std::max(0, i - windowSize / 2); j <= std::min(i + windowSize / 2, numPoints - 1); ++j)
-        {
-            sum += kDistances[j];
-            count++;
-        }
-        smoothed[i] = sum / count;
-    }
-    std::copy(smoothed.begin(), smoothed.end(), kDistances);
-}
-
-void smoothGaussian(float kDistances[], int numPoints)
-{
-    int windowSize = 3;
-    // Check for valid window size
-    if (windowSize <= 0 || windowSize > numPoints)
-        return;
-
-    std::vector<float> smoothed(numPoints, 0);
-    std::vector<float> kernel(windowSize, 0);
-
-    // Compute the standard deviation, sigma
-    float sigma = windowSize / 6.0; // A common choice is to set sigma as windowSize / 6
-    float sumKernel = 0;
-
-    // Generate Gaussian kernel
-    for (int i = 0; i < windowSize; ++i)
-    {
-        float x = i - windowSize / 2;
-        kernel[i] = exp(-0.5 * pow(x / sigma, 2));
-        sumKernel += kernel[i];
-    }
-
-    // Normalize the kernel
-    for (auto &k : kernel)
-        k /= sumKernel;
-
-    // Apply Gaussian smoothing
-    for (int i = 0; i < numPoints; ++i)
-    {
-        float weightedSum = 0;
-        for (int j = 0; j < windowSize; ++j)
-        {
-            int index = i + j - windowSize / 2;
-            if (index >= 0 && index < numPoints)
-            {
-                weightedSum += kDistances[index] * kernel[j];
-            }
-        }
-        smoothed[i] = weightedSum;
-    }
-
-    // Copy the smoothed values back to the original array
-    std::copy(smoothed.begin(), smoothed.end(), kDistances);
-}
-
-float calculatePointDistance(const Point &p1, const Point &p2)
-{
-    return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) + pow(p1.z - p2.z, 2));
-}
 
 // Function to calculate the k-distance for each point
-void calculateKDistance_set_Epsilon(Point points[], int numPoints)
+void calculateKDistance_set_Epsilon()
 {
-    float kDistances[MAX_POINTS];
+    std::vector<float> kDistancesX(numPoints);
+    std::vector<float> kDistancesY(numPoints);
+    std::vector<float> kDistancesZ(numPoints);
 
     for (int i = 0; i < numPoints; ++i)
     {
-        std::vector<KDistance> distances;
+        // Store distances to all other points in each dimension
+        std::vector<float> distancesX, distancesY, distancesZ;
         for (int j = 0; j < numPoints; ++j)
         {
             if (i != j)
             {
-                float dist = calculatePointDistance(points[i], points[j]);
-                distances.push_back({dist, j});
+                distancesX.push_back(abs(points[i].x - points[j].x));
+                distancesY.push_back(abs(points[i].y - points[j].y));
+                distancesZ.push_back(abs(points[i].z - points[j].z));
             }
         }
-        std::sort(distances.begin(), distances.end(), [](const KDistance &a, const KDistance &b)
-                  { return a.distance < b.distance; });
-        if (distances.size() >= K)
-        {
-            kDistances[i] = distances[K - 1].distance;
-        }
-        else
-        {
-            kDistances[i] = -1; // Indicate insufficient neighbors
-        }
+
+        // Sort and pick the Kth distance
+        std::sort(distancesX.begin(), distancesX.end());
+        std::sort(distancesY.begin(), distancesY.end());
+        std::sort(distancesZ.begin(), distancesZ.end());
+
+        kDistancesX[i] = distancesX[K - 1];
+        kDistancesY[i] = distancesY[K - 1];
+        kDistancesZ[i] = distancesZ[K - 1];
     }
 
-    // smoothMovingAverage(kDistances, numPoints);
-    // smoothGaussian(kDistances, numPoints);
-    int Elbow_value = findElbowPoint(kDistances, numPoints);
-    int Knee_value = findKneePoint(kDistances, numPoints);
-    // epsilon = coeff_elbow * Elbow_value + coeff_Knee * Knee_value;
-    Serial.print("Elbow_value= ");
-    Serial.print(Elbow_value);
-    Serial.print(" ,Knee_value= ");
-    Serial.print(Knee_value);
-    adjustEpsilonBasedOnFeedback(Elbow_value, Knee_value);
+    // Calculate elbow and knee points for each dimension
+    float elbowPointX = findElbowPoint(kDistancesX);
+    float kneePointX = findKneePoint(kDistancesX);
+
+    float elbowPointY = findElbowPoint(kDistancesY);
+    float kneePointY = findKneePoint(kDistancesY);
+
+    float elbowPointZ = findElbowPoint(kDistancesZ);
+    float kneePointZ = findKneePoint(kDistancesZ);
+
+    // Print the calculated points
+    Serial.print("Elbow Point X: ");
+    Serial.println(elbowPointX);
+    Serial.print("Knee Point X: ");
+    Serial.println(kneePointX);
+
+    Serial.print("Elbow Point Y: ");
+    Serial.println(elbowPointY);
+    Serial.print("Knee Point Y: ");
+    Serial.println(kneePointY);
+
+    Serial.print("Elbow Point Z: ");
+    Serial.println(elbowPointZ);
+    Serial.print("Knee Point Z: ");
+    Serial.println(kneePointZ);
+
+    // Call the function with the calculated values
+    adjustThresholdsBasedOnFeedback(elbowPointX, kneePointX,
+                                    elbowPointY, kneePointY,
+                                    elbowPointZ, kneePointZ);
 }
 
 void print_kDistance(float kDistances[], int numPoints)
