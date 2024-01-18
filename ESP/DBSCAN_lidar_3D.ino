@@ -278,21 +278,14 @@ void move_collect_data(int start_point, int end_point)
             points[index] = update_point(pan_servoPosition, tilt_servoPosition, distance, index);
             print_point_data(index, pan_servoPosition, tilt_servoPosition, distance);
 
-            if (distance > Sensor_min_range && distance <= argent_warning_distance && warning_distance == false)
-            {
-                Serial.println("     EMERGENCY       ");
-                warning_distance = true;
-                move_collect_data(pan_servoPosition - step, pan_servoPosition + step);
-                warning_distance = false;
-                Serial.print(" number of points in critical zone: ");
-                Serial.println(points_in_warning_distance);
-                points_in_warning_distance = 0;
-                move_collect_data(pan_servoPosition + step, end_point);
-                return;
-            }
-            if (warning_distance && distance <= argent_warning_distance)
+            if (distance > Sensor_min_range && distance <= argent_warning_distance)
             {
                 points_in_warning_distance++;
+                if (points_in_warning_distance > 2)
+                {
+                    Serial.println(" EMERGENCY ");
+                    points_in_warning_distance = 0;
+                }
             }
         }
         if (pan_servoPosition == end_point)
