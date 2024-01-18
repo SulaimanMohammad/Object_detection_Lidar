@@ -44,10 +44,13 @@ const int numSamples = 1; // number of samples for one reading
 #define minPoints 3               // Number of close point to form cluster
 #define angleWeight 0.1           // How imortant is the connectivity of the angle with distance
 #define shift_margin_to_merge 300 // Max diffeence in distance between tow clusters core to merge them
-float epsilon;                    // Dynamically defined by K-distance methode
-int numPoints = MAX_POINTS;
 #define NOISE -2
 #define UNCLASSIFIED -1
+int numPoints = MAX_POINTS;
+float thresholdX = 50;
+float thresholdY = 50;
+float thresholdZ = 50;
+
 struct ClusterInfo
 {
     float sumX, sumY, sumZ;                // Coordinates for centroid
@@ -251,11 +254,7 @@ void print_point_data(int index, int pan_servoPosition, int tilt_servoPosition, 
     Serial.print(points[index].y);
     Serial.print(", ");
     Serial.print(points[index].z);
-    Serial.print(")");
-    Serial.print(", Distance 3D: ");
-    Serial.print(calculateDistance(points[index], points[index - 1]));
-    Serial.print(", Distance 2D: ");
-    Serial.println(points[index].distance);
+    Serial.println(")");
 }
 void move_collect_data(int start_point, int end_point)
 {
@@ -323,17 +322,7 @@ float calculateDistance(const Point &p1, const Point &p2)
 {
     // Calculate the Euclidean distance in 3D
     float spatialDist = sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) + pow(p1.z - p2.z, 2));
-
-    // Calculate angular difference
-    float panDiff = abs(p1.pan_angle - p2.pan_angle);
-    float tiltDiff = abs(p1.tilt_angle - p2.tilt_angle);
-
-    // Scale the angular differences angleWeight is a predefined constant
-    float scaledPanDiff = panDiff * angleWeight;
-    float scaledTiltDiff = tiltDiff * angleWeight;
-
-    // Combine the distances
-    return spatialDist + scaledPanDiff + scaledTiltDiff;
+    return spatialDist;
 }
 
 void resetData()
@@ -411,12 +400,18 @@ void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
     gather_clusters_info(clusters); // Save the info of clusters in vector
 }
 
+bool arePointsNeighbors(const Point &p1, const Point &p2)
+{
+
+    return abs(p1.x - p2.x) <= thresholdX && abs(p1.y - p2.y) <= thresholdY && abs(p1.z - p2.z) <= thresholdZ;
+}
+
 void getNeighbors(int pointIndex, std::vector<int> &neighbors)
 {
     neighbors.clear();
     for (int i = 0; i < numPoints; ++i)
     {
-        if (calculateDistance(points[pointIndex], points[i]) <= epsilon)
+        if (arePointsNeighbors(points[pointIndex], points[i]))
         {
             neighbors.push_back(i);
         }
