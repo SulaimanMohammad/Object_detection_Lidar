@@ -123,7 +123,6 @@ float calculateDistance(const Point &p1, const Point &p2);                      
 void DBSCAN();
 std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &clustersSweep1, std::vector<ClusterInfo> &clustersSweep2);
 void calculateKDistance_set_Epsilon();
-void print_kDistance(float kDistances[], int numPoints);
 void gather_clusters_info(std::vector<ClusterInfo> &clusters);
 void printClustersInfo(const std::vector<ClusterInfo> &clusters, int sweep);
 int get_distance();
@@ -405,7 +404,7 @@ void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
             clusterMap[clusterId].push_back(points[i]);
         }
     }
-
+    numberOfClusters = clusterMap.size();
     gather_clusters_info(clusters); // Save the info of clusters in vector
 }
 
@@ -1009,43 +1008,13 @@ void print_kDistance(std::vector<float> kDistances)
 ---------------------- Info of clusters ------------------------
 ----------------------------------------------------------------
 */
-
-int countUniqueClusters(Point points[], int numPoints)
-{
-    std::vector<bool> uniqueClusters;
-    int numUniqueClusters = 0;
-
-    for (int i = 0; i < numPoints; i++)
-    {
-        if (points[i].clusterId > 0)
-        {
-            // Resize vector if needed
-            if (points[i].clusterId >= uniqueClusters.size())
-            {
-                uniqueClusters.resize(points[i].clusterId + 1, false);
-            }
-
-            // Check and mark this cluster ID as found
-            if (!uniqueClusters[points[i].clusterId])
-            {
-                uniqueClusters[points[i].clusterId] = true;
-                numUniqueClusters++;
-            }
-        }
-    }
-
-    return numUniqueClusters + 1;
-}
-
 void gather_clusters_info(std::vector<ClusterInfo> &clusters)
 {
-    numberOfClusters = countUniqueClusters(points, numPoints); // Get the number of clusters
-    Serial.print(" Number of objects : ");
-    Serial.println(numberOfClusters - 1);
-    ClusterInfo clusterData[numberOfClusters];
+    // clusterData array is sized to numberOfClusters + 1 to accommodate the fact that clusterId starts at 1
+    ClusterInfo clusterData[numberOfClusters + 1];
 
     // Initialize cluster data
-    for (int i = 0; i < numberOfClusters; ++i)
+    for (int i = 0; i <= numberOfClusters; ++i)
     {
         clusterData[i] = {0, 0, 0,
                           0, 0, 0,
@@ -1103,7 +1072,7 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
     }
 
     // Populate the clusters vector
-    for (int i = 0; i < numberOfClusters; ++i)
+    for (int i = 0; i <= numberOfClusters; ++i)
     {
         if (clusterData[i].count > 0)
         {
