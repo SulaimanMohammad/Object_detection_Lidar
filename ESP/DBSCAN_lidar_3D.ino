@@ -27,7 +27,7 @@ const int numSamples = 1;     // number of samples for one reading
 // pan-tilt range
 #define pan_start_range 20
 #define pan_end_range 120
-#define tilt_start_range 40
+#define tilt_start_range 0
 #define tilt_end_range 120
 
 #define object_FOV (FOV * 3) // Field of object detection (enough angles to detect object)
@@ -39,7 +39,7 @@ const int numSamples = 1;     // number of samples for one reading
 /* ---------- Servo variables ---------- */
 #define pan_controle 2       // Pin on the bord for control signal
 #define tilt_controle 4      // Pin on the bord for control signal
-#define servo_1degree_time 4 // milliseconds
+#define servo_1degree_time 8 // milliseconds
 
 /* ---------- DBSCAN parameters ---------- */
 #define minPoints 3               // Number of close point to form cluster
@@ -300,6 +300,16 @@ void move_collect_data(int start_point, int end_point)
 ------------------Set the point in 2D plan -----------------
 ------------------------------------------------------------
 */
+int map_angle_centered_fixed_system(int angle)
+{
+    if (angle > 180)
+    {
+        angle = angle - 180; // map the angle fist to range (0-90) or Axes will flip
+    }
+    int mapped_angle = angle - 90;
+    return mapped_angle;
+}
+
 Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance)
 {
     Point p;
@@ -307,13 +317,13 @@ Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance)
     p.pan_angle = pan_angle;
     p.tilt_angle = tilt_angle;
     // Convert angles from degrees to radians
-    float theta = static_cast<float>(pan_angle) * PI / 180.0f; // Pan angle in radians
-    float phi = static_cast<float>(tilt_angle) * PI / 180.0f;  // Tilt angle in radians
+    float theta = static_cast<float>(map_angle_centered_fixed_system(p.pan_angle)) * PI / 180.0f; // Pan angle in radians
+    float phi = static_cast<float>(map_angle_centered_fixed_system(p.tilt_angle)) * PI / 180.0f;  // Tilt angle in radians
 
     // Convert to Cartesian coordinates
-    p.x = distance * cos(theta) * sin(phi);
-    p.y = distance * sin(theta) * sin(phi);
-    p.z = distance * cos(phi);
+    p.x = distance * cos(theta) * cos(phi);
+    p.y = distance * sin(theta) * cos(phi);
+    p.z = distance * sin(phi);
 
     return p;
 }
