@@ -13,17 +13,18 @@
 #include <cfloat>
 #include <map>
 #include <numeric>
-#include <deque> // For the sliding window
 
 #define DEV_I2C Wire
 #define SerialPort Serial
 
 #define argent_warning_distance 40
-bool warning_distance = false;
 int points_in_warning_distance = 0;
 /* ---------- Lidar variables ---------- */
-const int numSamples = 1; // number of samples for one reading
-#define FOV 3             // Field of View of the sensor
+const int numSamples = 1;     // number of samples for one reading
+#define FOV 3                 // Field of View of the sensor
+#define Sensor_max_range 6000 // Maximum reading the sensor give, here 6m in mm
+#define Sensor_min_range 20
+// pan-tilt range
 #define pan_start_range 20
 #define pan_end_range 120
 #define tilt_start_range 40
@@ -33,13 +34,12 @@ const int numSamples = 1; // number of samples for one reading
 #define pan_active_range (pan_end_range - pan_start_range)
 #define tilt_active_range (tilt_end_range - tilt_start_range)
 #define MAX_POINTS (((pan_active_range / object_FOV) + 1) * ((tilt_active_range / object_FOV) + 1))
-#define Sensor_max_range 6000 // it is maximum reading the sensor give here 6m in mm
-#define Sensor_min_range 20
 #define Limit_distance Sensor_max_range + (Sensor_max_range * 0.20)
+
 /* ---------- Servo variables ---------- */
 #define pan_controle 2       // Pin on the bord for control signal
 #define tilt_controle 4      // Pin on the bord for control signal
-#define servo_1degree_time 6 // milliseconds
+#define servo_1degree_time 4 // milliseconds
 
 /* ---------- DBSCAN parameters ---------- */
 #define minPoints 3               // Number of close point to form cluster
@@ -48,9 +48,9 @@ const int numSamples = 1; // number of samples for one reading
 #define NOISE -2
 #define UNCLASSIFIED -1
 int numPoints = MAX_POINTS;
-float thresholdX = 50;
-float thresholdY = 50;
-float thresholdZ = 50;
+float epsilonX = 50;
+float epsilonY = 50;
+float epsilonZ = 50;
 
 struct ClusterInfo
 {
@@ -69,6 +69,7 @@ struct ClusterInfo
     int sweep2Index;                       // Index of the cluster in clustersSweep2
 };
 int numberOfClusters;
+
 /* ---------- TOPSIS parameters ---------- */
 #define weightCorePointDistance 0.31
 #define weightNumberOfPoints 0.09
@@ -88,8 +89,6 @@ float globalMaxMinDistance = FLT_MIN;
 
 /* ----------  K-distance to define espsilon of DBSCAN parameters ---------- */
 const int K = minPoints;
-float coeff_elbow = 0;
-float coeff_Knee = 1 - coeff_elbow;
 struct KDistance
 {
     float distance;
@@ -166,7 +165,7 @@ void loop()
     printClustersInfo(clustersSweep2, 2);
 
     std::vector<ClusterInfo> mergedClusters = mergeClustersBasedOnTopsis(clustersSweep1, clustersSweep2);
-    Serial.println("            Merged Cluster Info: ");
+    Serial.println("        Merged Cluster Info:           ");
     for (const auto &cluster : mergedClusters)
     {
         Serial.print("CorePointDistance: ");
@@ -257,6 +256,7 @@ void print_point_data(int index, int pan_servoPosition, int tilt_servoPosition, 
     Serial.print(points[index].z);
     Serial.println(")");
 }
+
 void move_collect_data(int start_point, int end_point)
 {
     int index = 0;
@@ -337,6 +337,7 @@ void resetData()
         points[i].visited = false;
     }
 }
+
 void print_position_distance(int arrayIndex, int servoPosition, int distance_value)
 {
     Serial.print("arrayIndex");
@@ -401,7 +402,7 @@ void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
 bool arePointsNeighbors(const Point &p1, const Point &p2)
 {
 
-    return abs(p1.x - p2.x) <= thresholdX && abs(p1.y - p2.y) <= thresholdY && abs(p1.z - p2.z) <= thresholdZ;
+    return abs(p1.x - p2.x) <= epsilonX && abs(p1.y - p2.y) <= epsilonY && abs(p1.z - p2.z) <= epsilonZ;
 }
 
 void getNeighbors(int pointIndex, std::vector<int> &neighbors)
@@ -608,6 +609,7 @@ std::vector<ClusterInfo> mergeClustersPostTopsis(std::vector<ClusterInfo> &clust
 
     return clusters;
 }
+
 std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &clustersSweep1, std::vector<ClusterInfo> &clustersSweep2)
 {
     // Calculate scores for all clusters
@@ -777,8 +779,7 @@ float findKneePoint_simple(const std::vector<float> &kDistances)
     return averageKneeDistance;
 }
 
-// this knee finder use Derivative-Based Method , Significant Knee Selection, Outlier Handling
-
+// Angle-Based Knee Point Detection
 float findKneePoint(const std::vector<float> &kDistances)
 {
     int numPoints = kDistances.size();
@@ -835,29 +836,51 @@ int estimateNoisePoints(float thresholdX, float thresholdY, float thresholdZ)
     return noisePointCount;
 }
 
-void adjustThresholdsBasedOnFeedback(float elbowValueX, float kneeValueX,
-                                     float elbowValueY, float kneeValueY,
-                                     float elbowValueZ, float kneeValueZ)
+void adjustThresholdsBasedOnFeedback(std::vector<float> kDistancesX, std::vector<float> kDistancesY, std::vector<float> kDistancesZ)
 {
+
+    // Calculate elbow and knee points for each dimension
+    float elbowPointX = findElbowPoint(kDistancesX);
+    float elbowPointY = findElbowPoint(kDistancesY);
+    float elbowPointZ = findElbowPoint(kDistancesZ);
+
+    float kneePointX = findKneePoint(kDistancesX);
+    float kneePointY = findKneePoint(kDistancesY);
+    float kneePointZ = findKneePoint(kDistancesZ);
+
+    Serial.print("Elbow Point X: ");
+    Serial.print(elbowPointX);
+    Serial.print(" ,Elbow Point Y: ");
+    Serial.print(elbowPointY);
+    Serial.print(" ,Elbow Point Z: ");
+    Serial.println(elbowPointZ);
+
+    Serial.print("Knee Point X: ");
+    Serial.print(kneePointX);
+    Serial.print(" ,Knee Point Y: ");
+    Serial.print(kneePointY);
+    Serial.print(" ,Knee Point Z: ");
+    Serial.println(kneePointZ);
+
     // Find the combination that produces the minimum noise for each dimension
-    std::vector<float> thresholdCandidatesX = {elbowValueX, kneeValueX};
-    std::vector<float> thresholdCandidatesY = {elbowValueY, kneeValueY};
-    std::vector<float> thresholdCandidatesZ = {elbowValueZ, kneeValueZ};
+    std::vector<float> epsilonCandidatesX = {elbowPointX, kneePointX};
+    std::vector<float> epsilonCandidatesY = {elbowPointY, kneePointY};
+    std::vector<float> epsilonCandidatesZ = {elbowPointZ, kneePointZ};
 
     float minNoiseX = std::numeric_limits<float>::max();
     float minNoiseY = std::numeric_limits<float>::max();
     float minNoiseZ = std::numeric_limits<float>::max();
 
     // Optimal thresholds
-    float optimalThresholdX = thresholdCandidatesX[0];
-    float optimalThresholdY = thresholdCandidatesY[0];
-    float optimalThresholdZ = thresholdCandidatesZ[0];
+    float optimalEpsilonX = epsilonCandidatesX[0];
+    float optimalEpsilonY = epsilonCandidatesY[0];
+    float optimalEpsilonZ = epsilonCandidatesZ[0];
 
-    for (float candidateX : thresholdCandidatesX)
+    for (float candidateX : epsilonCandidatesX)
     {
-        for (float candidateY : thresholdCandidatesY)
+        for (float candidateY : epsilonCandidatesY)
         {
-            for (float candidateZ : thresholdCandidatesZ)
+            for (float candidateZ : epsilonCandidatesZ)
             {
                 int noisePoints = estimateNoisePoints(candidateX, candidateY, candidateZ);
 
@@ -865,36 +888,36 @@ void adjustThresholdsBasedOnFeedback(float elbowValueX, float kneeValueX,
                 if (candidateX == candidateY && candidateX == candidateZ && noisePoints < minNoiseX)
                 {
                     minNoiseX = noisePoints;
-                    optimalThresholdX = candidateX;
+                    optimalEpsilonX = candidateX;
                 }
 
                 // Check for Y
                 if (candidateY == candidateX && candidateY == candidateZ && noisePoints < minNoiseY)
                 {
                     minNoiseY = noisePoints;
-                    optimalThresholdY = candidateY;
+                    optimalEpsilonY = candidateY;
                 }
 
                 // Check for Z
                 if (candidateZ == candidateX && candidateZ == candidateY && noisePoints < minNoiseZ)
                 {
                     minNoiseZ = noisePoints;
-                    optimalThresholdZ = candidateZ;
+                    optimalEpsilonZ = candidateZ;
                 }
             }
         }
     }
 
-    thresholdX = optimalThresholdX;
-    thresholdY = optimalThresholdY;
-    thresholdZ = optimalThresholdZ;
+    epsilonX = optimalEpsilonX;
+    epsilonY = optimalEpsilonY;
+    epsilonZ = optimalEpsilonZ;
 
-    Serial.print("Optimal Threshold X: ");
-    Serial.println(thresholdX);
-    Serial.print("Optimal Threshold Y: ");
-    Serial.println(thresholdY);
-    Serial.print("Optimal Threshold Z: ");
-    Serial.println(thresholdZ);
+    Serial.print("Optimal Epsilon X: ");
+    Serial.println(epsilonX);
+    Serial.print("Optimal Epsilon Y: ");
+    Serial.println(epsilonY);
+    Serial.print("Optimal Epsilon Z: ");
+    Serial.println(epsilonZ);
 }
 
 /*
@@ -902,71 +925,62 @@ void adjustThresholdsBasedOnFeedback(float elbowValueX, float kneeValueX,
 ------------- K-Distance to define epsilon od DBSCAN ----------
 ---------------------------------------------------------------
 */
-
-// Function to calculate the k-distance for each point
-void calculateKDistance_set_Epsilon()
+void calculateDimensionKDistance(std::vector<float> &kDistances, int dimension)
 {
-    std::vector<float> kDistancesX(numPoints);
-    std::vector<float> kDistancesY(numPoints);
-    std::vector<float> kDistancesZ(numPoints);
-
     for (int i = 0; i < numPoints; ++i)
     {
-        // Store distances to all other points in each dimension
-        std::vector<float> distancesX, distancesY, distancesZ;
-        for (int j = 0; j < numPoints; ++j)
+        std::vector<float> distances(numPoints - 1);
+        for (int j = 0, idx = 0; j < numPoints; ++j)
         {
             if (i != j)
             {
-                distancesX.push_back(abs(points[i].x - points[j].x));
-                distancesY.push_back(abs(points[i].y - points[j].y));
-                distancesZ.push_back(abs(points[i].z - points[j].z));
+                float diff = 0;
+                switch (dimension)
+                {
+                case 0:
+                    diff = abs(points[i].x - points[j].x);
+                    break;
+                case 1:
+                    diff = abs(points[i].y - points[j].y);
+                    break;
+                case 2:
+                    diff = abs(points[i].z - points[j].z);
+                    break;
+                }
+                distances[idx++] = diff;
             }
         }
 
-        // Sort and pick the Kth distance
-        std::sort(distancesX.begin(), distancesX.end());
-        std::sort(distancesY.begin(), distancesY.end());
-        std::sort(distancesZ.begin(), distancesZ.end());
-
-        kDistancesX[i] = distancesX[K - 1];
-        kDistancesY[i] = distancesY[K - 1];
-        kDistancesZ[i] = distancesZ[K - 1];
+        if (distances.size() >= K)
+        {
+            std::nth_element(distances.begin(), distances.begin() + K - 1, distances.end());
+            kDistances[i] = distances[K - 1];
+        }
+        else
+        {
+            kDistances[i] = -1; // Or handle this case as needed
+        }
     }
-
-    // Calculate elbow and knee points for each dimension
-    float elbowPointX = findElbowPoint(kDistancesX);
-    float kneePointX = findKneePoint(kDistancesX);
-
-    float elbowPointY = findElbowPoint(kDistancesY);
-    float kneePointY = findKneePoint(kDistancesY);
-
-    float elbowPointZ = findElbowPoint(kDistancesZ);
-    float kneePointZ = findKneePoint(kDistancesZ);
-
-    // Print the calculated points
-    Serial.print("Elbow Point X: ");
-    Serial.println(elbowPointX);
-    Serial.print("Knee Point X: ");
-    Serial.println(kneePointX);
-
-    Serial.print("Elbow Point Y: ");
-    Serial.println(elbowPointY);
-    Serial.print("Knee Point Y: ");
-    Serial.println(kneePointY);
-
-    Serial.print("Elbow Point Z: ");
-    Serial.println(elbowPointZ);
-    Serial.print("Knee Point Z: ");
-    Serial.println(kneePointZ);
-
-    // Call the function with the calculated values
-    adjustThresholdsBasedOnFeedback(elbowPointX, kneePointX,
-                                    elbowPointY, kneePointY,
-                                    elbowPointZ, kneePointZ);
 }
 
-void print_kDistance(float kDistances[], int numPoints)
+void calculateKDistance_set_Epsilon()
+{
+    std::vector<float> kDistancesX(numPoints), kDistancesY(numPoints), kDistancesZ(numPoints);
+
+    calculateDimensionKDistance(kDistancesX, 0);
+    calculateDimensionKDistance(kDistancesY, 1);
+    calculateDimensionKDistance(kDistancesZ, 2);
+
+    // Adjust Thresholds Based On Feedback to choose the value of threshould ( depends on application)
+    // adjustThresholdsBasedOnFeedback(kDistancesX, kDistancesY, kDistancesZ);
+
+    // The most Accurate methode to set values based on Angle-Based Knee Point Detection
+    epsilonX = findKneePoint(kDistancesX);
+    epsilonY = findKneePoint(kDistancesY);
+    epsilonZ = findKneePoint(kDistancesZ);
+}
+
+void print_kDistance(std::vector<float> kDistances)
 {
     for (int i = 0; i < numPoints; ++i)
     {
