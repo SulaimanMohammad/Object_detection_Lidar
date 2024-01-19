@@ -63,7 +63,7 @@ struct ClusterInfo
     int corePointNumNeighbors;             // Number of neighbors for the core point
     float minDistance;                     // Minimum distance in the cluster
     int minDistancePointIndex;             // Index of the point with minimum distance
-    int sweep;                             // 1 for first sweep (0-180), 2 for second sweep (180-0)
+    int id;                                // id of cluster
     float topsisScore;                     // scores based on criteria
     int sweep1Index;                       // Index of the cluster in clustersSweep1
     int sweep2Index;                       // Index of the cluster in clustersSweep2
@@ -105,7 +105,24 @@ struct Point
     int clusterId = UNCLASSIFIED;
 };
 Point points[MAX_POINTS];
-std::map<int, std::vector<Point>> clusterMap;
+
+struct Object
+{
+    int id;
+    float centerX, centerY, centerZ;
+    float lengthX, lengthY, lengthZ;
+    // Constructor to set the id and centroid coordinates
+    Object(int objectId, float cx, float cy, float cz)
+        : id(objectId), centerX(cx), centerY(cy), centerZ(cz),
+          lengthX(0), lengthY(0), lengthZ(0) {}
+    // Method to set lengths
+    void setLengths(float lx, float ly, float lz)
+    {
+        lengthX = lx;
+        lengthY = ly;
+        lengthZ = lz;
+    }
+};
 
 /* ----------  Initialization ---------- */
 VL53L4CX sensor_vl53l4cx_sat(&DEV_I2C, 2);
@@ -113,18 +130,22 @@ Servo pan_servo;
 Servo tilt_servo;
 
 /*----------- Functions Declaration -------*/
-void move_collect_data(int start_point, int end_point);                              // Move servo and save distance for each angle
-void detect_objects_clustering(std::vector<ClusterInfo> &clusters);                  // Call DBSCAN, calcul esp and count number of objects
-void resetData();                                                                    // Reset data after sweeps 0-180 to 180-0
-void print_position_distance(int arrayIndex, int servoPosition, int distance_value); // print data of each angle and distance
-void reorderPointsForConsistentProcessing();                                         // Reorder Point to match 0-180 with 180 to 0
-Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance);           // Convert point from ( angle, distance) to (x,y)
-float calculateDistance(const Point &p1, const Point &p2);                           // Calculate the distance between 2 points considering the distance and the angle
+void move_collect_data(int start_point, int end_point);                                                            // Move servo and save distance for each angle
+void detect_objects_clustering(std::vector<ClusterInfo> &clusters, std::map<int, std::vector<Point>> &clusterMap); // Call DBSCAN, calcul esp and count number of objects
+void resetData();                                                                                                  // Reset data after sweeps 0-180 to 180-0
+void print_position_distance(int arrayIndex, int servoPosition, int distance_value);                               // print data of each angle and distance
+void reorderPointsForConsistentProcessing();                                                                       // Reorder Point to match 0-180 with 180 to 0
+Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance);                                         // Convert point from ( angle, distance) to (x,y)
+float calculateDistance(const Point &p1, const Point &p2);                                                         // Calculate the distance between 2 points considering the distance and the angle
 void DBSCAN();
+std::vector<Object> define_objects(std::vector<ClusterInfo> clusters, std::map<int, std::vector<Point>> clusterMap);
+void printObjects(const std::vector<Object> &objects);
+void print_position_from_sensor(const std::vector<ClusterInfo> clusters);
 std::vector<ClusterInfo> mergeClustersBasedOnTopsis(std::vector<ClusterInfo> &clustersSweep1, std::vector<ClusterInfo> &clustersSweep2);
 void calculateKDistance_set_Epsilon();
 void gather_clusters_info(std::vector<ClusterInfo> &clusters);
 void printClustersInfo(const std::vector<ClusterInfo> &clusters, int sweep);
+void print_clusters_points(std::map<int, std::vector<Point>> clusterMap);
 int get_distance();
 void reportMemory();
 
@@ -149,19 +170,25 @@ void setup()
 
 void loop()
 {
+    std::map<int, std::vector<Point>> clusterMap;
     Serial.println(" Sweep 0-180");
     move_collect_data(pan_start_range, pan_end_range);
     std::vector<ClusterInfo> clustersSweep1;
-    detect_objects_clustering(clustersSweep1);
+    detect_objects_clustering(clustersSweep1, clusterMap);
     printClustersInfo(clustersSweep1, 1);
+    print_clusters_points(clusterMap);
+    std::vector<Object> detected_objectSweep1 = define_objects(clustersSweep1, clusterMap);
+    printObjects(detected_objectSweep1);
 
     Serial.println(" Sweep 180-0");
     move_collect_data(pan_end_range, pan_start_range);
     reorderPointsForConsistentProcessing(); // Reorder points for consistent processing
-
     std::vector<ClusterInfo> clustersSweep2;
-    detect_objects_clustering(clustersSweep2);
+    detect_objects_clustering(clustersSweep2, clusterMap);
     printClustersInfo(clustersSweep2, 2);
+    print_clusters_points(clusterMap);
+    std::vector<Object> detected_objectSweep2 = define_objects(clustersSweep2, clusterMap);
+    printObjects(detected_objectSweep2);
 
     std::vector<ClusterInfo> mergedClusters = mergeClustersBasedOnTopsis(clustersSweep1, clustersSweep2);
     Serial.println("        Merged Cluster Info:           ");
@@ -275,7 +302,7 @@ void move_collect_data(int start_point, int end_point)
             index = calculate_index(pan_servoPosition, tilt_servoPosition);
             int distance = get_distance();
             points[index] = update_point(pan_servoPosition, tilt_servoPosition, distance, index);
-            print_point_data(index, pan_servoPosition, tilt_servoPosition, distance);
+            // print_point_data(index, pan_servoPosition, tilt_servoPosition, distance);
 
             if (distance > Sensor_min_range && distance <= argent_warning_distance)
             {
@@ -377,7 +404,7 @@ void reorderPointsForConsistentProcessing()
 --------------------------- DBSCAN --------------------------
 -------------------------------------------------------------
 */
-void detect_objects_clustering(std::vector<ClusterInfo> &clusters)
+void detect_objects_clustering(std::vector<ClusterInfo> &clusters, std::map<int, std::vector<Point>> &clusterMap)
 {
     // Calculate k-distance for each point, Calculate espilon
     calculateKDistance_set_Epsilon();
@@ -1076,6 +1103,7 @@ void gather_clusters_info(std::vector<ClusterInfo> &clusters)
     {
         if (clusterData[i].count > 0)
         {
+            clusterData[i].id = i;
             clusterData[i].centroidX = clusterData[i].sumX / clusterData[i].count;
             clusterData[i].centroidY = clusterData[i].sumY / clusterData[i].count;
             clusterData[i].centroidZ = clusterData[i].sumZ / clusterData[i].count;
@@ -1109,34 +1137,179 @@ void printClustersInfo(const std::vector<ClusterInfo> &clusters, int sweep)
         Serial.print(" , Minimum Distance: ");
         Serial.println(cluster.minDistance);
     }
-    // New code to print all points in the cluster
-    Serial.println("Points in this cluster:");
+}
+
+void printPadded(String value, int width)
+{
+    int numSpaces = width - value.length();
+    Serial.print(value);
+    for (int i = 0; i < numSpaces; i++)
+    {
+        Serial.print(" ");
+    }
+    Serial.print(" | ");
+}
+
+void print_clusters_points(std::map<int, std::vector<Point>> clusterMap)
+{
+    Serial.println(" ID | Coordinates (x, y, z)      | Distance  |  Pan  | Tilt ");
+    Serial.println("----|----------------------------|-----------|-------|------");
+
+    for (const auto &pair : clusterMap)
+    {
+        const auto &points = pair.second;
+
+        for (const auto &point : points)
+        {
+            printPadded(String(pair.first), 3); // Adjust the width as needed
+
+            String coordinates = "(" + String(point.x, 2) + ", " + String(point.y, 2) + ", " + String(point.z, 2) + ")";
+            printPadded(coordinates, 26); // Width based on your data
+
+            printPadded(String(point.distance), 9);
+            printPadded(String(point.pan_angle, 1), 5);
+            printPadded(String(point.tilt_angle, 1), 5);
+
+            Serial.println();
+        }
+        Serial.println("-------------------------------------------------------------");
+    }
+}
+
+/*
+----------------------------------------------------------------
+---------------------- Info of Objects ------------------------
+----------------------------------------------------------------
+*/
+std::vector<Object> define_objects(std::vector<ClusterInfo> clusters, std::map<int, std::vector<Point>> clusterMap)
+{
+    std::vector<Object> objects;
+
+    for (const auto &cluster : clusters)
+    {
+        Object obj(cluster.id, cluster.centroidX, cluster.centroidY, cluster.centroidZ);
+        objects.push_back(obj);
+    }
+
     for (const auto &pair : clusterMap)
     {
         int clusterId = pair.first;
         const auto &points = pair.second;
 
-        Serial.print("Cluster ID: ");
-        Serial.println(clusterId);
-
+        // Initialize min and max values for x, y, z
+        float minX = std::numeric_limits<int>::max();
+        float maxX = std::numeric_limits<int>::min();
+        float minY = std::numeric_limits<int>::max();
+        float maxY = std::numeric_limits<int>::min();
+        float minZ = std::numeric_limits<int>::max();
+        float maxZ = std::numeric_limits<int>::min();
         for (const auto &point : points)
         {
-            Serial.print("cluster indes : ");
-            Serial.print(point.clusterId);
-            Serial.print(", Coordinates: (");
-            Serial.print(point.x);
-            Serial.print(", ");
-            Serial.print(point.y);
-            Serial.print(", ");
-            Serial.print(point.z);
-            Serial.print(")");
-            Serial.print(", Distance: ");
-            Serial.print(point.distance);
-            Serial.print(", pan angle: ");
-            Serial.print(point.pan_angle);
-            Serial.print(",  tilt angle: ");
-            Serial.println(point.tilt_angle);
+            // Update min and max for x
+            minX = std::min(minX, point.x);
+            maxX = std::max(maxX, point.x);
+
+            // Update min and max for y
+            minY = std::min(minY, point.y);
+            maxY = std::max(maxY, point.y);
+
+            // Update min and max for z
+            minZ = std::min(minZ, point.z);
+            maxZ = std::max(maxZ, point.z);
         }
+        // Calculate distances
+        float distanceX = maxX - minX;
+        float distanceY = maxY - minY;
+        float distanceZ = maxZ - minZ;
+
+        // Find the Object with the corresponding clusterId and update lengths
+        for (Object &obj : objects)
+        {
+            if (obj.id == clusterId)
+            {
+                obj.setLengths(distanceX, distanceY, distanceZ);
+                break; // object is found and updated, exit
+            }
+        }
+    }
+
+    return objects;
+}
+
+void printObjects(const std::vector<Object> &objects)
+{
+    for (const auto &obj : objects)
+    {
+        Serial.print("Object ID: ");
+        Serial.println(obj.id);
+        Serial.print("Centroid Coordinates: X = ");
+        Serial.print(obj.centerX);
+        Serial.print(", Y = ");
+        Serial.print(obj.centerY);
+        Serial.print(", Z = ");
+        Serial.println(obj.centerZ);
+        Serial.print("Lengths: X = ");
+        Serial.print(obj.lengthX);
+        Serial.print(", Y = ");
+        Serial.print(obj.lengthY);
+        Serial.print(", Z = ");
+        Serial.println(obj.lengthZ);
+        Serial.println(); // Add an empty line for better readability
+    }
+}
+
+void print_position_from_sensor(const std::vector<ClusterInfo> clusters)
+{
+
+    for (const auto &cluster : clusters)
+    {
+        Serial.print("Position: ");
+        // Analyze Left-Right Position
+        if (cluster.centroidX > 0)
+        {
+            Serial.print("Right");
+        }
+        else if (cluster.centroidX < 0)
+        {
+            Serial.println("Left");
+        }
+        else
+        {
+            Serial.println("Center");
+        }
+
+        Serial.print(" - ");
+
+        // Analyze Forward-Backward Position
+        if (cluster.centroidY > 0)
+        {
+            Serial.print("Backward");
+        }
+        else if (cluster.centroidY < 0)
+        {
+            Serial.print("Forward");
+        }
+        else
+        {
+            Serial.print("Center");
+        }
+
+        Serial.print(" - ");
+        // Analyze Up-Down Position
+        if (cluster.centroidZ > 0)
+        {
+            Serial.print("Up");
+        }
+        else if (cluster.centroidZ < 0)
+        {
+            Serial.print("Down");
+        }
+        else
+        {
+            Serial.print("Center");
+        }
+
+        Serial.println();
     }
 }
 
