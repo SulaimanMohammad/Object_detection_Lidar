@@ -42,6 +42,7 @@ In the `Characterization.h` file, all constants used in the process are defined.
 
 ### 1. Sensor Section
    - **FOV (Field of View):** Depends on the sensor used and determines the window within which the sensor measures distance.
+   - **Object_FOV:** Its the actual movement of servo motors, if the FOV is so small then scanning the full area will take long time, so 3 times of FOV will be enough where the clustring methode will handel connecting the points, but this scale cand be changed.
    - **Min/Max Distance:** Defined by the sensor's capability. The minimum distance should be where readings remain linear.
    - **numSamples:** For some sensors, multiple readings are required. The median of these readings is taken for greater precision.
 
