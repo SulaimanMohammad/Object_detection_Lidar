@@ -52,10 +52,7 @@ std::vector<ClusterInfo> performSweepAndProcess(int startRange, int endRange, in
     print_clusters_points(points, clusterMap);
     auto detected_objects = define_objects(clustersSweep, clusterMap);
     printObjects(detected_objects);
-    if (sweepNumber == 2)
-    {
-        reorderPointsForConsistentProcessing(points);
-    }
+
     return clustersSweep; // Return the cluster data
 }
 
