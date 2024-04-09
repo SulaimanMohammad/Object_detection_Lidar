@@ -5,19 +5,19 @@
 #define argent_warning_distance 40 // Modifiable
 /* ---------- Lidar variables ---------- */
 #define FOV 3                 // Field of View of the sensor, Modifiable
-#define Sensor_max_range 6000 // Maximum reading the sensor give, here 6m in mm, Modifiable
-#define Sensor_min_range 20   // Modifiable
+#define Sensor_max_range 12000 // Maximum reading the sensor give, here 6m in mm, Modifiable
+#define Sensor_min_range 20    // Modifiable
 #define numSamples 1          // Number of samples for one reading, Modifiable
 #define Sensor_serial_port 2   // Serial port for the sensor, Modifiable
 #define RXD2 16
 #define TXD2 17
 /* ----------  Pan-tilt range ---------- */
-#define pan_start_range 20 // Modifiable
+#define pan_start_range 0 // Modifiable
 #define pan_end_range 120  // Modifiable
 #define tilt_start_range 0 // Modifiable
 #define tilt_end_range 120 // Modifiable
 
-#define object_FOV (FOV * 3) // Field of object detection (enough angles to detect object)
+#define object_FOV (FOV * 2) // Field of object detection (enough angles to detect object)
 #define pan_active_range (pan_end_range - pan_start_range)
 #define tilt_active_range (tilt_end_range - tilt_start_range)
 #define MAX_POINTS (((pan_active_range / object_FOV) + 1) * ((tilt_active_range / object_FOV) + 1))
