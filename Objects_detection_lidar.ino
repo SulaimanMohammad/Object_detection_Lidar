@@ -44,7 +44,8 @@ void loop()
 std::vector<ClusterInfo> performSweepAndProcess(int startRange, int endRange, int sweepNumber)
 {
     Serial.println(" Sweep " + String(startRange) + "-" + String(endRange));
-    move_collect_data(points, pan_servo, tilt_servo, startRange, endRange);
+    move_collect_data(points, pan_servo, tilt_servo, startRange, endRange); 
+    //move_collect_data(points, pan_servo, tilt_servo, startRange, endRange, true); // Print all points while moving  
     auto clusterMap = detect_objects_clustering(points);
     int numberOfClusters = get_number_of_clusters(clusterMap);
     auto clustersSweep = gather_clusters_info(points, numberOfClusters);
@@ -52,7 +53,7 @@ std::vector<ClusterInfo> performSweepAndProcess(int startRange, int endRange, in
     print_clusters_points(points, clusterMap);
     auto detected_objects = define_objects(clustersSweep, clusterMap);
     printObjects(detected_objects);
-
+    print_position_from_sensor(clustersSweep);
     return clustersSweep; // Return the cluster data
 }
 
