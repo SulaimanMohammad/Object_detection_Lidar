@@ -8,9 +8,6 @@
 #define Sensor_max_range 6000 // Maximum reading the sensor give, here 6m in mm, Modifiable
 #define Sensor_min_range 20   // Modifiable
 #define numSamples 1          // Number of samples for one reading, Modifiable
-#define Sensor_serial_port 2   // Serial port for the sensor, Modifiable
-#define RXD2 16
-#define TXD2 17
 
 /* ----------  Pan-tilt range ---------- */
 #define pan_start_range 20 // Modifiable
