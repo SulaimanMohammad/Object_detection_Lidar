@@ -53,7 +53,6 @@ int get_distance()
         {
             unvalid_counter++;
         }
-        delay(5);
     }
 
     if (unvalid_counter != numSamples)
