@@ -2,7 +2,7 @@
 #define CHARACTERIZATION_H
 
 #define SerialPort Serial
-#define argent_warning_distance 40 // Modifiable
+#define argent_warning_distance 400 // Modifiable
 /* ---------- Lidar variables ---------- */
 #define FOV 3                 // Field of View of the sensor, Modifiable
 #define Sensor_max_range 12000 // Maximum reading the sensor give, here 6m in mm, Modifiable
@@ -21,16 +21,16 @@
 #define pan_active_range (pan_end_range - pan_start_range)
 #define tilt_active_range (tilt_end_range - tilt_start_range)
 #define MAX_POINTS (((pan_active_range / object_FOV) + 1) * ((tilt_active_range / object_FOV) + 1))
-#define Limit_distance Sensor_max_range + (Sensor_max_range * 0.20)
+#define Limit_distance Sensor_max_range - (Sensor_max_range * 0.20)
 #define numPoints MAX_POINTS
 
 /* ---------- Servo variables ---------- */
 #define pan_controle 2       // Modifiable
 #define tilt_controle 4      // Modifiable
-#define servo_1degree_time 8 // Modifiable, milliseconds
+#define servo_1degree_time 3 // Modifiable, milliseconds
 
 /* ---------- DBSCAN parameters ---------- */
-#define minPoints 3 // Number of close point to form cluster, Modifiable
+#define minPoints object_FOV // Number of close point to form cluster, Modifiable
 #define NOISE -2
 #define UNCLASSIFIED -1
 #define K minPoints // K-Distance parameter= minPoints of DBSCAN
