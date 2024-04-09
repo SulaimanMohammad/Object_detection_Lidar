@@ -25,7 +25,7 @@ Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance)
     float phi = static_cast<float>(map_angle_centered_fixed_system(p.tilt_angle, tilt_end_range)) * PI / 180.0f; // Tilt angle in radians
 
     // Convert to Cartesian coordinates
-    p.x = distance;
+    p.x = distance * cos(theta) * cos(phi);
     p.y = distance * sin(theta) * cos(phi);
     p.z = distance * sin(phi);
 
