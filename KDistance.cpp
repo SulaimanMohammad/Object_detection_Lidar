@@ -4,76 +4,13 @@
 ---------------------- Find epsilon od DBSCAN -----------------
 ---------------------------------------------------------------
 */
-// Elbow Method
-float findElbowPoint(const std::vector<float> &kDistances)
-{
-    int numkPoints = kDistances.size();
-    std::vector<int> elbowIndices; // Store indices of all elbow points
-
-    for (int i = 1; i < numkPoints - 1; ++i)
-    {
-        // Finding local maxima in the k-distance graph
-        if (kDistances[i] > kDistances[i - 1] && kDistances[i] > kDistances[i + 1])
-        {
-            elbowIndices.push_back(i);
-        }
-    }
-
-    // Calculate the average of all elbow points
-    float sumElbowDistances = 0;
-    for (int index : elbowIndices)
-    {
-        sumElbowDistances += kDistances[index];
-    }
-
-    float averageElbowDistance = 0;
-    if (!elbowIndices.empty())
-    {
-        averageElbowDistance = sumElbowDistances / elbowIndices.size();
-    }
-
-    return averageElbowDistance;
-}
-
-float findKneePoint_simple(const std::vector<float> &kDistances)
-{
-    int numkPoints = kDistances.size();
-    std::vector<int> kneeIndices; // Store indices of all knee points
-
-    for (int i = 1; i < numkPoints - 1; ++i)
-    {
-        // Finding points with significant change in slope
-        float diff1 = kDistances[i] - kDistances[i - 1];
-        float diff2 = kDistances[i + 1] - kDistances[i];
-        if (diff1 * diff2 < 0)
-        { // Change in the sign of the slope
-            kneeIndices.push_back(i);
-        }
-    }
-
-    // Calculate the average of all knee points
-    float sumKneeDistances = 0;
-    for (int index : kneeIndices)
-    {
-        sumKneeDistances += kDistances[index];
-    }
-
-    float averageKneeDistance = 0;
-    if (!kneeIndices.empty())
-    {
-        averageKneeDistance = sumKneeDistances / kneeIndices.size();
-    }
-
-    return averageKneeDistance;
-}
-
 // Angle-Based Knee Point Detection
-float findKneePoint(const std::vector<float> &kDistances)
+int findKneePointIndex(const std::vector<float> &kDistances)
 {
     int numkPoints = kDistances.size();
     if (numkPoints < 3)
     {
-        return -1; // Not enough points to determine a knee
+        return -1; // Not enough points to determine a knee, return invalid index
     }
 
     // Function to calculate the angle between three points
@@ -83,130 +20,40 @@ float findKneePoint(const std::vector<float> &kDistances)
         return fabs(angle);
     };
 
-    float maxAngle = 0.0;
-    int kneeIndex = -1;
-
-    // Iterate over the points to find the maximum angle
+    // Calculate all angles
+    std::vector<float> angles;
     for (int i = 1; i < numkPoints - 1; ++i)
     {
-        float currentAngle = angle(kDistances[i - 1], kDistances[i], kDistances[i + 1]);
-        if (currentAngle > maxAngle)
-        {
-            maxAngle = currentAngle;
-            kneeIndex = i;
-        }
+        angles.push_back(angle(kDistances[i - 1], kDistances[i], kDistances[i + 1]));
     }
 
-    return (kneeIndex != -1) ? kDistances[kneeIndex] : -1;
-}
-
-int estimateNoisePoints(Point points[], float thresholdX, float thresholdY, float thresholdZ)
-{
-    int noisePointCount = 0;
-    for (int i = 0; i < numPoints; ++i)
+    // Calculate the average angle change to define a dynamic threshold
+    float sumAngleChanges = 0.0;
+    for (int i = 1; i < angles.size(); ++i)
     {
-        int neighborCount = 0;
-        for (int j = 0; j < numPoints; ++j)
-        {
-            if (i != j &&
-                abs(points[i].x - points[j].x) <= thresholdX &&
-                abs(points[i].y - points[j].y) <= thresholdY &&
-                abs(points[i].z - points[j].z) <= thresholdZ)
-            {
-                neighborCount++;
-            }
-        }
-        if (neighborCount < minPoints)
-        {
-            noisePointCount++;
-        }
+        sumAngleChanges += fabs(angles[i] - angles[i - 1]);
     }
-    return noisePointCount;
-}
+    float averageAngleChange = sumAngleChanges / (angles.size() - 1);
+    float dynamicThreshold = averageAngleChange * 1;
 
-void adjustThresholdsBasedOnFeedback(Point points[], std::vector<float> kDistancesX, std::vector<float> kDistancesY, std::vector<float> kDistancesZ, float &epsilonX, float &epsilonY, float &epsilonZ)
-{
-
-    // Calculate elbow and knee points for each dimension
-    float elbowPointX = findElbowPoint(kDistancesX);
-    float elbowPointY = findElbowPoint(kDistancesY);
-    float elbowPointZ = findElbowPoint(kDistancesZ);
-
-    float kneePointX = findKneePoint(kDistancesX);
-    float kneePointY = findKneePoint(kDistancesY);
-    float kneePointZ = findKneePoint(kDistancesZ);
-
-    Serial.print("Elbow Point X: ");
-    Serial.print(elbowPointX);
-    Serial.print(" ,Elbow Point Y: ");
-    Serial.print(elbowPointY);
-    Serial.print(" ,Elbow Point Z: ");
-    Serial.println(elbowPointZ);
-
-    Serial.print("Knee Point X: ");
-    Serial.print(kneePointX);
-    Serial.print(" ,Knee Point Y: ");
-    Serial.print(kneePointY);
-    Serial.print(" ,Knee Point Z: ");
-    Serial.println(kneePointZ);
-
-    // Find the combination that produces the minimum noise for each dimension
-    std::vector<float> epsilonCandidatesX = {elbowPointX, kneePointX};
-    std::vector<float> epsilonCandidatesY = {elbowPointY, kneePointY};
-    std::vector<float> epsilonCandidatesZ = {elbowPointZ, kneePointZ};
-
-    float minNoiseX = std::numeric_limits<float>::max();
-    float minNoiseY = std::numeric_limits<float>::max();
-    float minNoiseZ = std::numeric_limits<float>::max();
-
-    // Optimal thresholds
-    float optimalEpsilonX = epsilonCandidatesX[0];
-    float optimalEpsilonY = epsilonCandidatesY[0];
-    float optimalEpsilonZ = epsilonCandidatesZ[0];
-
-    for (float candidateX : epsilonCandidatesX)
+    // Identify the index of the maximum knee based on dynamic threshold
+    float maxAngle = 0.0;
+    int kneeIndex = -1;
+    for (int i = 0; i < angles.size(); ++i)
     {
-        for (float candidateY : epsilonCandidatesY)
+        if (i > 0 && fabs(angles[i] - angles[i - 1]) > dynamicThreshold)
         {
-            for (float candidateZ : epsilonCandidatesZ)
+            if (angles[i] > maxAngle)
             {
-                int noisePoints = estimateNoisePoints(points, candidateX, candidateY, candidateZ);
-
-                // Check for X
-                if (candidateX == candidateY && candidateX == candidateZ && noisePoints < minNoiseX)
-                {
-                    minNoiseX = noisePoints;
-                    optimalEpsilonX = candidateX;
-                }
-
-                // Check for Y
-                if (candidateY == candidateX && candidateY == candidateZ && noisePoints < minNoiseY)
-                {
-                    minNoiseY = noisePoints;
-                    optimalEpsilonY = candidateY;
-                }
-
-                // Check for Z
-                if (candidateZ == candidateX && candidateZ == candidateY && noisePoints < minNoiseZ)
-                {
-                    minNoiseZ = noisePoints;
-                    optimalEpsilonZ = candidateZ;
-                }
+                maxAngle = angles[i];
+                kneeIndex = i + 1; // i + 1 because angles are calculated from the second point
             }
         }
     }
 
-    epsilonX = optimalEpsilonX;
-    epsilonY = optimalEpsilonY;
-    epsilonZ = optimalEpsilonZ;
-
-    Serial.print("Optimal Epsilon X: ");
-    Serial.println(epsilonX);
-    Serial.print("Optimal Epsilon Y: ");
-    Serial.println(epsilonY);
-    Serial.print("Optimal Epsilon Z: ");
-    Serial.println(epsilonZ);
+    return kneeIndex;
 }
+
 
 /*
 ---------------------------------------------------------------
@@ -251,7 +98,25 @@ void calculateDimensionKDistance(Point points[], std::vector<float> &kDistances,
     }
 }
 
-void calculateKDistance_set_Epsilon(Point points[], float &epsilonX, float &epsilonY, float &epsilonZ)
+// Function to add to epsilons if index is unique
+void addToEpsilonsIfUnique(std::vector<std::vector<float>> &epsilons, const std::vector<float> &kDistancesX, const std::vector<float> &kDistancesY, const std::vector<float> &kDistancesZ, int index, std::set<int> &usedIndices)
+{
+    if (usedIndices.find(index) == usedIndices.end())
+    { // Index not used yet
+        if (index == -1)
+        {
+            epsilons.push_back({10.0, 10.0, 10.0});
+        }
+        else
+        {
+            epsilons.push_back({kDistancesX[index], kDistancesY[index], kDistancesZ[index]});
+        }
+
+        usedIndices.insert(index); // Mark index as used
+    }
+}
+
+std::vector<std::vector<float>> calculateKDistance_set_Epsilon(Point points[], float &epsilonX, float &epsilonY, float &epsilonZ)
 {
     std::vector<float> kDistancesX(numPoints), kDistancesY(numPoints), kDistancesZ(numPoints);
 
@@ -259,13 +124,34 @@ void calculateKDistance_set_Epsilon(Point points[], float &epsilonX, float &epsi
     calculateDimensionKDistance(points, kDistancesY, 1);
     calculateDimensionKDistance(points, kDistancesZ, 2);
 
-    // Adjust Thresholds Based On Feedback to choose the value of threshould ( depends on application)
-    // adjustThresholdsBasedOnFeedback(kDistancesX, kDistancesY, kDistancesZ, epsilonX, epsilonY,epsilonZ);
-
     // The most Accurate methode to set values based on Angle-Based Knee Point Detection
-    epsilonX = findKneePoint(kDistancesX);
-    epsilonY = findKneePoint(kDistancesY);
-    epsilonZ = findKneePoint(kDistancesZ);
+    // Find the index of espsilon on  x, y and Z in K-distance
+    int index_epsilonX = findKneePointIndex(kDistancesX);
+    int index_epsilonY = findKneePointIndex(kDistancesY);
+    int index_epsilonZ = findKneePointIndex(kDistancesZ);
+
+    /*
+    Generate the combination of Espslion sets as follow
+    index of espsilonX then first set of espdilons vector
+    1- k-distanceX[index of espsilonX ] , k-distanceY[index of espsilonX ], k-distanceZ[index of espsilonX ]
+    index of espsilonY then first set of espdilons vector
+    2- k-distanceX[index of espsilonY ] , k-distanceY[index of espsilonY ], k-distanceZ[index of espsilonY ]
+    index of espsilonZ then first set of espdilons vector
+    3- k-distanceX[index of espsilonZ ] , k-distanceY[index of espsilonZ ], k-distanceZ[index of espsilonZ ]
+
+    And the reason of this compinasion, that finding for example epsilon on X , then the rest should accord with this espdilonX
+    For that the same point on distanceY,Z are considered in the vector
+    */
+    Serial.println(kDistancesZ[index_epsilonZ]);
+    std::vector<std::vector<float>> epsilons;
+    std::set<int> usedIndices;
+
+    // This function is used to avoid repeated vectors( like in case same indexs on multiple axes like index espdilonX and espsilonY has same index)
+    addToEpsilonsIfUnique(epsilons, kDistancesX, kDistancesY, kDistancesZ, index_epsilonX, usedIndices);
+    addToEpsilonsIfUnique(epsilons, kDistancesX, kDistancesY, kDistancesZ, index_epsilonY, usedIndices);
+    addToEpsilonsIfUnique(epsilons, kDistancesX, kDistancesY, kDistancesZ, index_epsilonZ, usedIndices);
+
+    return epsilons;
 }
 
 void print_kDistance(std::vector<float> kDistances)
