@@ -72,13 +72,13 @@ void printObjects(const std::vector<Object> &objects)
         Serial.print(obj.centerY);
         Serial.print(", Z = ");
         Serial.println(obj.centerZ);
-        Serial.print("Lengths: X = ");
+        Serial.print(" Width(distance) X = ");
         Serial.print(obj.lengthX);
-        Serial.print(", Y = ");
+        Serial.print(",Length Y = ");
         Serial.print(obj.lengthY);
-        Serial.print(", Z = ");
+        Serial.print(", Hight Z = ");
         Serial.println(obj.lengthZ);
-        Serial.println(); // Add an empty line for better readability
+        Serial.println();
     }
 }
 
@@ -88,14 +88,14 @@ void print_position_from_sensor(const std::vector<ClusterInfo> clusters)
     for (const auto &cluster : clusters)
     {
         Serial.print("Position: ");
-        // Analyze Left-Right Position
+        // Analyze Forward-Backward Position
         if (cluster.centroidX > 0)
         {
-            Serial.print("Right");
+            Serial.print("Front");
         }
         else if (cluster.centroidX < 0)
         {
-            Serial.println("Left");
+            Serial.println("Back");
         }
         else
         {
@@ -104,14 +104,14 @@ void print_position_from_sensor(const std::vector<ClusterInfo> clusters)
 
         Serial.print(" - ");
 
-        // Analyze Forward-Backward Position
+        // Analyze Left-Right Position
         if (cluster.centroidY > 0)
         {
-            Serial.print("Backward");
+            Serial.print("Left");
         }
         else if (cluster.centroidY < 0)
         {
-            Serial.print("Forward");
+            Serial.print("Right ");
         }
         else
         {
