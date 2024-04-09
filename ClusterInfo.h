@@ -12,7 +12,6 @@ struct ClusterInfo
     int count;                             // Count of points in the cluster
     int corePointIndex;                    // Index of the core point
     float corePointDistance;               // Distance of the core point
-    int corePointNumNeighbors;             // Number of neighbors for the core point
     float minDistance;                     // Minimum distance in the cluster
     int minDistancePointIndex;             // Index of the point with minimum distance
     int id;                                // id of cluster

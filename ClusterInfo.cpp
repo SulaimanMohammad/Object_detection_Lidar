@@ -1,16 +1,14 @@
 #include "ClusterInfo.h"
-
+#include <cfloat> // Include for FLT_MAX
 /*
 ----------------------------------------------------------------
 ---------------------- Info of clusters ------------------------
 ----------------------------------------------------------------
 */
-
 std::vector<ClusterInfo> gather_clusters_info(Point points[], int numberOfClusters)
 {
     std::vector<ClusterInfo> clusters;
-    // clusterData array is sized to numberOfClusters + 1 to accommodate the fact that clusterId starts at 1
-    ClusterInfo clusterData[numberOfClusters + 1];
+    std::vector<ClusterInfo> clusterData(numberOfClusters + 1);
 
     // Initialize cluster data
     for (int i = 0; i <= numberOfClusters; ++i)
@@ -19,73 +17,62 @@ std::vector<ClusterInfo> gather_clusters_info(Point points[], int numberOfCluste
                           0, 0, 0,
                           0,
                           0,
-                          -1, 0, 0,
+                          -1, 0,
                           Limit_distance, -1, 0, 0, 0, 0}; // Initialize minDistance with FLT_MAX
     }
 
-    // Iterating through each point
+    // Iterating through each point to accumulate data for centroid calculation and finding the minDistance
     for (int i = 0; i < numPoints; ++i)
     {
         int clusterId = points[i].clusterId;
         if (clusterId > 0 && clusterId <= numberOfClusters)
         {
-            // Accumulate for centroid calculation
             clusterData[clusterId].sumX += points[i].x;
             clusterData[clusterId].sumY += points[i].y;
             clusterData[clusterId].sumZ += points[i].z;
             clusterData[clusterId].count++;
             int pointDistance = points[i].distance;
-
             // Check for minimum distance
-            if (pointDistance < clusterData[clusterId].minDistance && pointDistance != 0)
+            if (pointDistance < clusterData[clusterId].minDistance && pointDistance > 0)
             {
                 clusterData[clusterId].minDistance = pointDistance;
                 clusterData[clusterId].minDistancePointIndex = i;
             }
-            // Check for core point (based on number of neighbors)
-            std::vector<int> neighbors;
-            getNeighbors(points, i, neighbors);
-            int numNeighbors_core = neighbors.size();
-            if (numNeighbors_core >= minPoints)
-            {
-                int currentDistance = points[i].distance;
-                // Validate the current point's distance
-                if (currentDistance > 0 && currentDistance < Limit_distance)
-                {
-                    // Assuming the core point is the one with the most neighbors
-                    if (clusterData[clusterId].corePointIndex == -1 || numNeighbors_core > clusterData[clusterId].corePointNumNeighbors)
-                    {
-                        clusterData[clusterId].corePointIndex = i;
-                        clusterData[clusterId].corePointNumNeighbors = numNeighbors_core;
-
-                        int corePointIndex = clusterData[clusterId].corePointIndex;
-                        if (corePointIndex >= 0 && corePointIndex < numPoints)
-                        {
-
-                            clusterData[clusterId].corePointDistance = points[corePointIndex].distance; // Access the distance using flatIndex
-                        }
-                    }
-                }
-            }
         }
     }
 
-    // Populate the clusters vector
-    for (int i = 0; i <= numberOfClusters; ++i)
+    // Calculating centroids and identifying core point based on closest distance to centroid
+    for (int clusterId = 1; clusterId <= numberOfClusters; ++clusterId)
     {
-        if (clusterData[i].count > 0)
+        if (clusterData[clusterId].count > 0)
         {
-            clusterData[i].id = i;
-            clusterData[i].centroidX = clusterData[i].sumX / clusterData[i].count;
-            clusterData[i].centroidY = clusterData[i].sumY / clusterData[i].count;
-            clusterData[i].centroidZ = clusterData[i].sumZ / clusterData[i].count;
-            clusterData[i].centerDistance = sqrt(pow(clusterData[i].centroidX, 2) + pow(clusterData[i].centroidY, 2) + pow(clusterData[i].centroidZ, 2));
-            clusters.push_back(clusterData[i]);
+            clusterData[clusterId].id = clusterId;
+            clusterData[clusterId].centroidX = clusterData[clusterId].sumX / clusterData[clusterId].count;
+            clusterData[clusterId].centroidY = clusterData[clusterId].sumY / clusterData[clusterId].count;
+            clusterData[clusterId].centroidZ = clusterData[clusterId].sumZ / clusterData[clusterId].count;
+            clusterData[clusterId].centerDistance = sqrt(pow(clusterData[clusterId].centroidX, 2) + pow(clusterData[clusterId].centroidY, 2) + pow(clusterData[clusterId].centroidZ, 2));
+
+            float minDistToCentroid = FLT_MAX;
+            for (int i = 0; i < numPoints; ++i)
+            {
+                if (points[i].clusterId == clusterId)
+                {
+                    float distToCentroid = sqrt(pow(points[i].x - clusterData[clusterId].centroidX, 2) +
+                                                pow(points[i].y - clusterData[clusterId].centroidY, 2) +
+                                                pow(points[i].z - clusterData[clusterId].centroidZ, 2));
+                    if (distToCentroid < minDistToCentroid && distToCentroid < Limit_distance)
+                    {
+                        minDistToCentroid = distToCentroid;
+                        clusterData[clusterId].corePointIndex = i;
+                        clusterData[clusterId].corePointDistance = points[i].distance;
+                    }
+                }
+            }
+            clusters.push_back(clusterData[clusterId]);
         }
     }
     return clusters;
 }
-
 void printClustersInfo(const std::vector<ClusterInfo> clusters, int sweep)
 {
     Serial.print("\t Formed Clusters\t \n");
@@ -104,8 +91,6 @@ void printClustersInfo(const std::vector<ClusterInfo> clusters, int sweep)
         Serial.print(" , ");
         Serial.print("Number of Points: ");
         Serial.print(cluster.count);
-        Serial.print(" , Core Point Num Neighbors: ");
-        Serial.print(cluster.corePointNumNeighbors);
         Serial.print(" , Core Point distance: ");
         Serial.print(cluster.corePointDistance);
         Serial.print(" , Minimum Distance: ");
@@ -132,13 +117,14 @@ void print_clusters_points(Point points[], std::map<int, std::vector<Point>> clu
     for (const auto &pair : clusterMap)
     {
         const auto &points = pair.second;
-
+        Serial.print("num of points");
+        Serial.println(pair.second.size());
         for (const auto &point : points)
         {
-            printPadded(String(pair.first), 3); // Adjust the width as needed
+            printPadded(String(pair.first), 3);
 
             String coordinates = "(" + String(point.x, 2) + ", " + String(point.y, 2) + ", " + String(point.z, 2) + ")";
-            printPadded(coordinates, 26); // Width based on your data
+            printPadded(coordinates, 26);
 
             printPadded(String(point.distance), 9);
             printPadded(String(point.pan_angle, 1), 5);
