@@ -20,9 +20,11 @@ The DBSCAN (Density-Based Spatial Clustering of Applications with Noise) algorit
 
 ### 3D Clustering
 DBSCAN in this context is a 3D clustering process, using x, y, z coordinates. This ensures objects are recognized based not only on their polar distance from the sensor but also their spatial location.
+Noticing that X axes represent distance from sensor and Y (left-right) ,Z (up-down).
 
 ###  K-distance method ( dynamic DBSCAN Epsilon)
 DBSCAN requires an Epsilon parameter, crucial in determining whether a point belongs to a specific cluster. Given the usage of x, y, z coordinates, three Epsilons (EpsilonX, EpsilonY, EpsilonZ) are necessary. The Epsilons are dynamically determined using the K-distance method, which identifies a 'Knee' signifying notable changes in neighbors points in the dataset.
+The difference here that DBSCAN will have multiple (EpsilonX, EpsilonY, EpsilonZ) instead of one set and classify clusters using one set after another.
 
 ## Post-Clustering Analysis
 After cluster formation, each cluster's characteristics, such as the number of points, center, and minimum distance point, are calculated. These characteristics help identify the object's position and estimate its size relative to the sensor.
@@ -56,9 +58,8 @@ Defines the start and end angles of the servos, essentially determining the volu
    - Allows setting the weight (importance) of each criterion for merging clusters.
 
 ## Compatibility with Different Sensors
-The default distance sensor used is the VL53L4CX ToF, which operates via I2C. To use a different sensor module:
+There are 2 different implementation used the defulte is [TFMini Plus](https://www.sparkfun.com/products/15179) the second ([VL53L4CX ToF](https://www.adafruit.com/product/5425), which operates via I2C) . To use a different sensor module:
 
-   - Modify the `ReadTOF.h` file.
    - Include the library of your new sensor.
    - Change the implementation of `configure_TOF` and `sensor_measurement` functions without altering their signatures.
 
