@@ -17,7 +17,7 @@ int map_angle_centered_fixed_system(int angle, int limit)
 Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance)
 {
     Point p;
-    p.distance = distance;
+    p.distance = distance ;
     p.pan_angle = pan_angle;
     p.tilt_angle = tilt_angle;
     // Convert angles from degrees to radians
