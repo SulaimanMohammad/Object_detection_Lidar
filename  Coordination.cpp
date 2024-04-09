@@ -4,13 +4,13 @@
 ------------------Set the point in 2D plan -----------------
 ------------------------------------------------------------
 */
-int map_angle_centered_fixed_system(int angle, int limit)
+int map_angle_centered_fixed_system(int angle)
 {
     if (angle > 180)
     {
         angle = angle - 180; // map the angle fist to range (0-90) or Axes will flip
     }
-    int mapped_angle = angle - (limit / 2.0);
+    int mapped_angle = angle - 90;
     return mapped_angle;
 }
 
@@ -21,8 +21,8 @@ Point sphericalToCartesian(int pan_angle, int tilt_angle, float distance)
     p.pan_angle = pan_angle;
     p.tilt_angle = tilt_angle;
     // Convert angles from degrees to radians
-    float theta = static_cast<float>(map_angle_centered_fixed_system(p.pan_angle, pan_end_range)) * PI / 180.0f; // Pan angle in radians
-    float phi = static_cast<float>(map_angle_centered_fixed_system(p.tilt_angle, tilt_end_range)) * PI / 180.0f; // Tilt angle in radians
+    float theta = static_cast<float>(map_angle_centered_fixed_system(p.pan_angle)) * PI / 180.0f; // Pan angle in radians
+    float phi = static_cast<float>(map_angle_centered_fixed_system(p.tilt_angle)) * PI / 180.0f;  // Tilt angle in radians
 
     // Convert to Cartesian coordinates
     p.x = distance * cos(theta) * cos(phi);
