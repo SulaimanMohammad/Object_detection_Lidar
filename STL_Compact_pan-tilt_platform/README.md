@@ -11,3 +11,5 @@ An Arm is connected to the second servo motor and moves horizontally.
 **Lidar Placement:** At the end of the Arm, a Lidar sensor is mounted, enabling precise scanning at various angles.
 
 This setup enables controlled movement in both axes, providing a stable and adjustable mounting solution for applications requiring precise targeting or scanning.
+
+![Compact Pan-Tilt Platform Preview](./pan_tilt-platform.png)
