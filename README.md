@@ -12,6 +12,8 @@ The pan-tilt platform operates as follows:
 
 With each movement, the distance sensor records a reading. Since the sensor measures the distance of the frontal area, the data (distance, angles) can be represented in a polar coordinate system. Each measurement is then mapped to a Cartesian system, oriented relative to a fixed pan-tilt angle (90-90 degrees), and stored in a matrix of points.
 
+[The STL files for the 3D model of the compact pan-tilt platform can be found in STL_Compact_pan-tilt_platform](https://github.com/SulaimanMohammad/Object_detection_Lidar/tree/main/STL_Compact_pan-tilt_platform)
+
 ## Data Collection
 Upon completion of a full surrounding scan, the points matrix is populated with (x, y, z) coordinates. An object is detected when multiple close distance measurements occur at approximate pan and tilt angles.
 
